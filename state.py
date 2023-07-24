@@ -30,5 +30,9 @@ class State():
         return self.__board
     
     @property
+    def bitboards(self) -> np.ndarray:
+        return self.__bitboards
+    
+    @property
     def turn(self) -> np.byte:
         return self.__turn
