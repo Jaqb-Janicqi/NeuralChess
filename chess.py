@@ -1,107 +1,148 @@
 import numpy as np
 
 from actionspace import ActionSpace
-from move import Move
+from custom_types import GameState, Move, allocate_game_state, allocate_move, allocate_move_arr
 from state import State
 
 
 class Chess():
-    def __init__(self, args, board_size, actionspace) -> None:
+    def __init__(self, args) -> None:
         self.__args = args
-        self.__board_size: int = board_size
-        self.__state: State = self.load_default(board_size)
-        self.__action_space: ActionSpace = actionspace
+        self.__board_size: int = 8
+        self.__state: State = self.load_default(8)
+        self.__action_space: ActionSpace = ActionSpace(8, 8)
+        self.__move_maps = {
+            1: {},
+            -1: {},
+            2: {},
+            3: {},
+            4: {},
+            5: {},
+            6: {}
+        }
+        self.move_functions = {
+            1: self.generate_pawn,
+            2: self.generate_knight,
+            3: self.generate_sliding,
+            4: self.generate_sliding,
+            5: self.generate_sliding,
+            6: self.generate_sliding
+        }
+        self.move_range = {
+            3: 999,
+            4: 999,
+            5: 999,
+            6: 1
+        }
 
-    def square_index(self, rank, file) -> np.ubyte:
-        return np.ubyte(rank * self.__board_size + file)
-    
-    def set_bit(value, bit) -> None:
-        value |= (1<<bit)
+    def set_bit(self, bitboard, bit_num) -> None:
+        return bitboard | (np.uint64(1) << bit_num)
 
-    def clear_bit(value, bit) -> None:
-        value &= ~(1<<bit)
+    def clear_bit(self, bitboard, bit_num) -> None:
+        return bitboard & ~(np.uint64(1) << bit_num)
 
-    def get_bitboard_id(self, piece_id, turn) -> np.ubyte:
-        if turn > 0:
-            return piece_id
-        return 2 * piece_id
+    def is_set(self, bitboard, bit_num) -> np.integer:
+        if bitboard & (np.uint64(1) << bit_num):
+            return True
+        return False
 
-    # def bind_move(self, rank, file, board_size) -> tuple[int, int]:
-    #     rank = max(0, min(rank, board_size - 1))
-    #     file = max(0, min(file, board_size - 1))
-    #     return rank, file
+    def square_index(self, rank, file) -> np.uint8:
+        return np.uint8(rank * self.__board_size + file)
 
-    # def is_in_bounds(self, rank, file, board_size) -> bool:
-    #     return 0 <= file < board_size and 0 <= rank < board_size
+    def move_piece(self, bitboard, src_sq, dst_sq) -> None:
+        self.set_bit(bitboard, dst_sq)
+        self.clear_bit(bitboard, src_sq)
 
-    def get_moves(self, state: State) -> list[Move]:
-        pass
+    def is_in_bounds(self, rank, file) -> bool:
+        return 0 <= rank < self.__board_size and 0 <= file < self.__board_size
+
+    def bind_move(self, rank, file) -> tuple[int, int]:
+        return max(0, min(rank, self.__board_size - 1)), max(0, min(file, self.__board_size - 1))
+
+    def piece_id(self, piece) -> np.number:
+        return abs(piece)
+
+    def piece_color(self, piece) -> np.number:
+        return np.sign(piece)
+
+    def int_from_char(char) -> np.uint8:
+        if char.isdigit():
+            return np.uint8(ord(char) - 48)
+        return np.uint8(ord(char) - 97)
+
+    def generate_sliding(self, board_size: np.uint8, src_rank: np.uint8,
+                         src_file: np.uint8, piece: np.int8) -> list[int]:
+        piece_id = self.piece_id(piece)
+        move_range = self.move_range[piece_id]
+        start_rank, start_file = self.bind_move(
+            src_rank - move_range,
+            src_file - move_range,
+            board_size)
+        end_rank, end_file = self.bind_move(
+            src_rank + move_range,
+            src_file + move_range,
+            board_size)
+
+        directions = []
+        if piece_id == 4 or piece_id == 5 or piece_id == 6:
+            directions += [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        if piece_id == 3 or piece_id == 5 or piece_id == 6:
+            directions += [(1, 1), (-1, 1), (1, -1), (-1, -1)]
+
+        move_bitboard = np.uint64(0)
+        for rank_dir, file_dir in directions:
+            rank, file = src_rank + rank_dir, src_file + file_dir
+            while start_rank <= rank <= end_rank and start_file <= file <= end_file:
+                self.set_bit(move_bitboard, self.square_index(rank, file))
+                rank += rank_dir
+                file += file_dir
+        return move_bitboard
+
+    def generate_knight(self, board: np.ndarray, src_rank: np.uint8,
+                        src_file: np.uint8, piece: np.int8) -> list[int]:
+        move_bitboard = np.uint64(0)
+        for file_dir, rank_dir in [(2, 1), (2, -1), (-2, 1), (-2, -1),
+                                   (1, 2), (1, -2), (-1, 2), (-1, -2)]:
+            rank, file = src_rank + rank_dir, src_file + file_dir
+            if self.is_in_bounds(rank, file, board.shape[0]):
+                self.set_bit(move_bitboard, self.square_index(rank, file))
+        return move_bitboard
+
+    def generate_pawn(self, board_size: np.uint8, src_rank: np.uint8,
+                      src_file: np.uint8, piece: np.int8) -> list[int]:
+        rank = src_rank + piece
+        move_bitboard = np.uint64
+        self.set_bit(move_bitboard, self.square_index(rank, file))
+
+        for side_dir in [-1, 1]:
+            file = src_file + side_dir
+            if self.is_in_bounds(rank, file, board_size):
+                self.set_bit(move_bitboard, self.square_index(rank, file))
+        return move_bitboard
+
+    def generate_moves(self):
+        pass  # TODO
 
     def next_game(self) -> None:
         self.__state = self.load_default(self.__board_size)
 
-    def next_state(self, state: State, move: Move) -> State:
-        src_y, src_x = move["src_y"], move["src_x"]
-        dst_y, dst_x = move["dst_y"], move["dst_x"]
-        src_sq_id = self.square_index(src_y, src_x)
-        dst_sq_id = self.square_index(dst_y, dst_x)
-        src_sq = state.board[src_y, src_x]
-        dst_sq = state.board[dst_y, dst_x]
-        src_id = np.absolute(src_sq)
-        dst_id = np.absolute(dst_sq)
-        promo_piece = move["promo_piece"]
-        special_dir = move["special_dir"]
-        turn = state.turn
-        winner = None
-        new_board = state.board.copy()
-        bitboards = state.bitboards.copy()
+    def add_piece(self, game_state, char, color, piece_id, rank, file) -> None:
+        square_index = self.square_index(rank, file)
+        game_state[char] = self.set_bit(game_state[char], square_index)
+        str_color = 'black' if color == -1 else 'white'
+        game_state[str_color] = self.set_bit(
+            game_state[str_color], square_index)
+        game_state['occupied'] = self.set_bit(
+            game_state['occupied'], square_index)
+        game_state['board'][rank, file] = piece_id
 
-        if src_id == np.ubyte(0):
-            raise Exception("Invalid action: source piece is empty")
-        if dst_id == np.ubyte(6):
-            
-            winner = state.turn
-        if move["promo_piece"] != np.ubyte(0):
-            
-            src_piece = move["promo_piece"] * state.turn
-
-        elif move["special_dir"] != np.ubyte(0):
-            if src_id == np.ubyte(1):
-                if dst_id == np.ubyte(0):
-                    if dst_y == 0 or dst_y == self.__board_size - 1:
-                        src_piece = np.ubyte(5) * state.turn
-                    else:
-                        src_piece = np.ubyte(1) * state.turn
-                else:
-                    src_piece = np.ubyte(1) * state.turn
-            rank = 0 if state.turn == 1 else self.__board_size - 1
-            
-                
-        
-        new_board[src_y, src_x] = 0
-        new_board[dst_y, dst_x] = src_piece
-        if np.count_nonzero(new_board) == 2:
-            winner = 0
-        return State(new_board, -state.turn, winner)
-
-    def fenn_decode(self, fenn_string, board_size: int) -> State:
-        bitboard_offset = {
-            'any': 0,
-            'P': 1,
-            'p': 2,
-            'N': 3,
-            'n': 4,
-            'B': 5,
-            'b': 6,
-            'R': 7,
-            'r': 8,
-            'Q': 9,
-            'q': 10,
-            'K': 11,
-            'k': 12,
-            'moved_or_not': 13,
-            'en_passant': 14,
-        }
+    def fenn_decode(self, fenn_string) -> State:
+        board_size = 1
+        for char in fenn_string:
+            if char == '/':
+                board_size += 1
+        if board_size == 0:
+            raise ValueError(f'Invalid fenn string {fenn_string}')
         piece_id = {
             'P': 1,
             'N': 2,
@@ -116,52 +157,116 @@ class Chess():
             'q': -5,
             'k': -6,
         }
-        bitboards = np.zeros(len(bitboard_offset), dtype=np.uint64)
-        board = np.zeros((board_size, board_size), dtype=np.byte)
-        player_turn = np.byte(1)
-        state = State(bitboards, board, player_turn)
+        game_state = allocate_game_state()
+        state = State(game_state)
         file = 0
         rank = board_size - 1
-        for char in fenn_string:
+
+        try:
+            pieces, turn, castling, en_passant, halfmove, fullmove = fenn_string.split(
+                ' ')
+        except ValueError:
+            raise ValueError(f'Invalid FEN string {fenn_string}')
+
+        # place pieces on board and bitboards
+        for char in pieces:
             if char == '/':
                 pass
             elif char.isdigit():
                 file += int(char)
                 r, file = np.divmod(file, board_size)
                 rank -= r
-            elif char in bitboard_offset:
-                bitboard_id = bitboard_offset[char]
-                board[rank, file] = piece_id[char]
-                bitboards[bitboard_id] |= np.uint64(
-                    1) << self.square_index(rank, file)
-                bitboards[bitboard_offset['moved_or_not']] |= np.uint64(
-                    1) << self.square_index(rank, file)
+            elif char in game_state.dtype.fields:
+                self.add_piece(game_state, char, self.piece_color(piece_id[char]),
+                               piece_id[char], rank, file)
                 file += 1
                 r, file = np.divmod(file, board_size)
                 rank -= r
             else:
                 raise ValueError(f'Unsupported character {char} in FEN string')
-        # display all of the bitboards
-        for i in range(len(bitboard_offset)):
-            bitboard = np.binary_repr(bitboards[i], width=64)
-            index = 0
-            print(f'{list(bitboard_offset.keys())[i]}')
-            for r in range(board_size):
-                for f in range(board_size):
-                    print(bitboard[index], end=' ')
-                    index += 1
-                print()
-            print()
+
+        # set turn
+        if turn == 'w':
+            game_state['turn'] = 1
+        elif turn == 'b':
+            game_state['turn'] = -1
+        else:
+            raise ValueError(f'Unsupported player turn {turn} in FEN string')
+
+        # set castling rights
+        try:
+            for char in castling:
+                if char == 'q':
+                    sq_num = self.square_index(7, 0)
+                    if self.is_set(game_state['r'], sq_num):
+                        game_state['castle_rights'] = self.set_bit(
+                            game_state['castle_rights'], sq_num)
+                    else:
+                        raise ValueError(
+                            f'Rook not present on required square to castle: {char}')
+                elif char == 'k':
+                    sq_num = self.square_index(7, 7)
+                    if self.is_set(game_state['r'], sq_num):
+                        game_state['castle_rights'] = self.set_bit(
+                            game_state['castle_rights'], sq_num)
+                    else:
+                        raise ValueError(
+                            f'Rook not present on required square to castle: {char}')
+                elif char == 'Q':
+                    sq_num = self.square_index(0, 0)
+                    if self.is_set(game_state['R'], sq_num):
+                        game_state['castle_rights'] = self.set_bit(
+                            game_state['castle_rights'], sq_num)
+                    else:
+                        raise ValueError(
+                            f'Rook not present on required square to castle: {char}')
+                elif char == 'K':
+                    sq_num = self.square_index(0, 7)
+                    if self.is_set(game_state['R'], sq_num):
+                        game_state['castle_rights'] = self.set_bit(
+                            game_state['castle_rights'], sq_num)
+                    else:
+                        raise ValueError(
+                            f'Rook not present on required square to castle: {char}')
+                else:
+                    raise ValueError(f'Unsupported castling direction: {char}')
+        except ValueError as e:
+            raise RuntimeError(f'Invalid castling rights') from e
+
+        # set en passant target
+        try:
+            if en_passant != '-':
+                file_char, rank_char = en_passant
+                rank = self.int_from_char((rank_char))
+                file = self.int_from_char((file_char))
+                sq_id = self.square_index(rank, file)
+                game_state['en_passant_target'] = self.set_bit(
+                    game_state['en_passant_target'], sq_id)
+        except:
+            raise ValueError(f'Invalid en_passant_target {en_passant}')
+
+        # set halfmove and fullmove
+        if not halfmove.isnumeric():
+            raise TypeError(f'Halfmove is not an intiger {halfmove}')
+        halfmove = int(halfmove)
+        if halfmove >= 100:
+            raise ValueError(f'Invalid halfmove value {halfmove}')
+        game_state['halfmove'] = halfmove
+
+        if not fullmove.isnumeric():
+            raise TypeError(f'Halfmove is not an intiger {fullmove}')
+        fullmove = int(fullmove)
+        if fullmove >= 100:
+            raise ValueError(f'Invalid halfmove value {fullmove}')
+        game_state['fullmove'] = fullmove
         return state
 
     def load_default(self, board_size: int) -> State:
-        return self.fenn_decode('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR', board_size)
+        return self.fenn_decode('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
 
     @property
     def action_space(self):
         return self.__action_space
 
 
-if __name__ == "__main__":
-    gm = Chess(dict(), 8, ActionSpace(8, 8))
-    st = gm.load_default()
+ch = Chess(dict())
