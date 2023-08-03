@@ -1,6 +1,6 @@
 import sys
-from contextlib import contextmanager
 from collections import OrderedDict
+from contextlib import contextmanager
 from threading import Condition, Lock
 
 
