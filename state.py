@@ -85,8 +85,8 @@ class State():
     @property
     def player_king(self) -> np.uint64:
         if self.__game_state["turn"] == 1:
-            return self.__game_state["6"]
-        return self.__game_state["-6"]
+            return self.__game_state["6"].item()
+        return self.__game_state["-6"].item()
 
     @property
     def enemy_or_empty(self) -> np.uint64:
