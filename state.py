@@ -4,6 +4,16 @@ import numpy as np
 
 from move import Move
 
+
+def print_bitboard(bitboard) -> None:
+    bitboard = np.binary_repr(bitboard, width=64)
+    for i in range(8):
+        bitboard_slice = bitboard[i*8:(i+1)*8]
+        bitboard_slice = ' '.join(bitboard_slice)
+        print(bitboard_slice)
+    print()
+
+
 npstate = np.dtype([
     ("-1", np.uint64),
     ("1", np.uint64),
@@ -43,7 +53,7 @@ class State():
         return str(self.__game_state)
 
     def copy(self):
-        return deepcopy(self.__game_state)
+        return deepcopy(self)
 
     def encode(self):
         board = self.__board if self.__game_state["turn"] == 1 else np.flip(
@@ -70,67 +80,84 @@ class State():
         dst_piece = self.__board[move.dst_y, move.dst_x].item()
 
         # check if castle and move rook
-        if move.castle != 0:
-            if move.castle == 1:
+        if src_piece == 6 and abs(move.src_x - move.dst_x) == 2:
+            rook = 4*self.player_turn
+            if move.dst_x == 6:
+                # castle kingside
                 # move rook on the board
                 self.__board[move.dst_y, move.dst_x +
                              1] = self.__board[move.dst_y, 7]
                 self.__board[move.dst_y, 7] = 0
                 # move rook on the bitboard
-                self.__game_state[4*self.player_turn] /= np.uint64(
-                    1 << (move.dst_y * 8 + move.dst_x + 1))
-                self.__game_state[4*self.player_turn] ^= np.uint64(
-                    1 << (move.dst_y * 8 + 7))
+                self.__game_state[f'{rook}'] |= \
+                    np.uint64(1) << np.uint64(move.dst_y * 8 + 5)
+                self.__game_state[f'{rook}'] ^= \
+                    np.uint64(1) << np.uint64(move.dst_y * 8 + 7)
             else:
+                # castle queenside
                 # move rook on the board
                 self.__board[move.dst_y, move.dst_x -
                              1] = self.__board[move.dst_y, 0]
                 self.__board[move.dst_y, 0] = 0
                 # move rook on the bitboard
-                self.__game_state[4*self.player_turn] /= np.uint64(
-                    1 << (move.dst_y * 8 + move.dst_x - 1))
-                self.__game_state[4*self.player_turn] ^= np.uint64(
-                    1 << (move.dst_y * 8 + 0))
-            # update castle rights
+                self.__game_state[f'{rook}'] |= \
+                    np.uint64(1) << np.uint64(move.dst_y * 8 + 3)
+                self.__game_state[f'{rook}'] ^= \
+                    np.uint64(1) << np.uint64(move.dst_y * 8 + 0)
+            # update castle rights by castle
             if self.player_turn == 1:
                 # remove white castle rights
-                self.__game_state["castle_rights"] ^= np.uint64(0b11)
+                self.__game_state["castle_rights"] ^= np.uint64(0b11111111)
             else:
                 # remove black castle rights
-                self.__game_state["castle_rights"] ^= np.uint64(0b1100)
-                
+                self.__game_state["castle_rights"] ^= np.uint64(
+                    0b11111111) << np.uint64(56)
         # check if en passant and remove captured pawn from board and bitboard
         elif move.src_y * 8 + move.src_x == self.en_passant_target:
             self.__board[move.src_y - self.player_turn, move.dst_x] = 0
-            self.__game_state[-self.player_turn] ^= np.uint64(
-                1 << (move.src_y - self.player_turn) * 8 + move.dst_x)  
+            self.__game_state[f'{-self.player_turn}'] ^= \
+                np.uint64(1) << np.uint64(
+                    (move.src_y - self.player_turn) * 8 + move.dst_x)
         # check if promotion and add new piece
         elif move.promo_piece != 0:
-            self.__game_state[move.promo_piece] /= np.uint64(
-                1 << (move.dst_y * 8 + move.dst_x))
-            self.__game_state[src_piece] ^= np.uint64(
-                1 << (move.src_y * 8 + move.src_x))
+            self.__game_state[f'{move.promo_piece}'] |= \
+                np.uint64(1) << np.uint64(move.dst_y * 8 + move.dst_x)
+            self.__game_state[f'{src_piece}'] ^= \
+                np.uint64(1) << np.uint64(move.src_y * 8 + move.src_x)
             self.__board[move.dst_y, move.dst_x] = move.promo_piece
 
         self.__board[move.src_y, move.src_x] = 0
         self.__board[move.dst_y, move.dst_x] = src_piece
 
         # update bitboards
-        src_bb = np.uint64(1 << (move.src_y * 8 + move.src_x))
-        dst_bb = np.uint64(1 << (move.dst_y * 8 + move.dst_x))
-        self.__game_state[src_piece] ^= src_bb
-        self.__game_state[dst_piece] ^= dst_bb
+        src_bb = np.uint64(1) << np.uint64(move.src_y * 8 + move.src_x)
+        dst_bb = np.uint64(1) << np.uint64(move.dst_y * 8 + move.dst_x)
+        self.__game_state[f'{src_piece}'] ^= src_bb
+        self.__game_state[f'{src_piece}'] |= dst_bb
+        if dst_piece != 0:
+            self.__game_state[f'{dst_piece}'] ^= dst_bb
 
         # update en passant target if a pawn moved 2 squares
         if src_piece == 1 and abs(move.src_y - move.dst_y) == 2:
-            self.__game_state["en_passant_target"] = move.src_y * 8 + move.src_x
+            self.__game_state["en_passant_target"] = dst_bb
         else:
             self.__game_state["en_passant_target"] = 0
 
         # update game state
         self.__game_state["turn"] = -self.__game_state["turn"]
-        self.__game_state["halfmove"] += 1
-        self.__game_state["fullmove"] += 1 if self.__game_state["turn"] == 1 else 0
+        self.__game_state["halfmove"] = self.__game_state["halfmove"] + 1
+        self.__game_state["fullmove"] = self.__game_state["fullmove"] + \
+            (self.__game_state["turn"] == -1)
+
+        # update castle rights by rook move
+        self.__game_state["castle_rights"] ^= src_bb
+        # update castle rights by capture
+        self.__game_state["castle_rights"] ^= dst_bb
+        # update castle rights by king move
+        if src_piece == 6:
+            self.__game_state["castle_rights"] ^= np.uint64(
+                0b11111111) << np.uint64(56 * (self.player_turn == -1))
+
         if dst_piece == 6 or dst_piece == -6:
             self.__game_state["terminal"] = True
             self.__game_state["winner"] = self.__game_state["turn"]
@@ -151,7 +178,7 @@ class State():
             if dst_piece != 0 or src_piece == 1 or src_piece == -1:
                 self.__game_state["fiftymoverule"] = 0
             else:
-                self.__game_state["fiftymoverule"] += 1
+                self.__game_state["fiftymoverule"] = self.__game_state["fiftymoverule"] + 1
 
     @property
     def black(self) -> np.uint64:
@@ -182,8 +209,8 @@ class State():
     @property
     def player_king(self) -> np.uint64:
         if self.__game_state["turn"] == 1:
-            return self.__game_state["6"].item()
-        return self.__game_state["-6"].item()
+            return self.__game_state["6"]
+        return self.__game_state["-6"]
 
     @property
     def enemy_or_empty(self) -> np.uint64:
@@ -216,19 +243,29 @@ class State():
     @property
     def en_passant_target(self) -> int:
         return self.__game_state["en_passant_target"]
-    
+
     @property
     def castle_rights(self) -> int:
         return self.__game_state["castle_rights"]
-    
+
     @property
     def halfmove(self) -> int:
         return self.__game_state["halfmove"]
-    
+
     @property
     def fullmove(self) -> int:
         return self.__game_state["fullmove"]
-    
+
     @property
     def fifty_move_rule(self) -> int:
         return self.__game_state["fiftymoverule"]
+
+    @property
+    def byte_rep(self) -> bytes:
+        return self.__game_state.tobytes()
+    
+    @property
+    def enemy_king(self) -> np.uint64:
+        if self.__game_state["turn"] == 1:
+            return self.__game_state["-6"]
+        return self.__game_state["6"]

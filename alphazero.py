@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm import trange
 
 from cache import Cache
-from chess import Chess
+from chess_game import Chess
 from mcts import MCTS
 from resnet import ResNet
 
@@ -38,16 +38,16 @@ class AlphaZero():
         t = 1 if "pit_temp" not in self.__args else self.__args["pit_temp"]
         probs **= (1/t)
         probs = probs / np.sum(probs)
-        legal_moves = self.get_legal_moves()
+        legal_moves = self.__game.get_legal_moves()
         action_id = np.random.choice(np.arange(len(probs)), p=probs)
-        action = self.__action_space[action_id]
+        action = self.__game.__action_space[action_id]
         if action not in legal_moves:
             raise ValueError("Illegal move")
         self.__state = self.__state.get_next_state(action)
     
     def pit(self, num_games, model1, model2, stochastic=False, verbose=False) -> float:
-        p1 = MCTS(self.__args, self.__action_space, Cache(), model1, int(self.__args["pit_searches"]))
-        p2 = MCTS(self.__args, self.__action_space, Cache(), model2, int(self.__args["pit_searches"]))
+        p1 = MCTS(self.__args, self.__game.__action_space, Cache(), model1, int(self.__args["pit_searches"]))
+        p2 = MCTS(self.__args, self.__game.__action_space, Cache(), model2, int(self.__args["pit_searches"]))
         players = {
             1: {
                 "model": p1,
@@ -63,8 +63,8 @@ class AlphaZero():
             }
         }
         for _ in range(num_games):
-            while not self.__state.is_terminal:
-                if self.__state.player_turn == 1:
+            while not self.__game.__state.is_terminal:
+                if self.__game.__state.player_turn == 1:
                     board, dist, value = players[1]["model"].search(self.__state)
                     self.stochastic_step(dist) if stochastic else self.step(dist)
                 else:
@@ -73,16 +73,16 @@ class AlphaZero():
             if verbose:   
                 print("\033[H\033[J")
                 print(self.__state.board)
-            if self.__state.win == 1:
+            if self.__game.__state.win == 1:
                 players[1]["wins"] += 1
                 players[-1]["losses"] += 1
-            elif self.__state.win == -1:
+            elif self.__game.__state.win == -1:
                 players[-1]["wins"] += 1
                 players[1]["losses"] += 1
             else:
                 players[1]["draws"] += 1
                 players[-1]["draws"] += 1
-            self.next_game()
+            self.__game.next_game()
             players[1], players[-1] = players[-1], players[1]
         wr = players[1]["wins"] / num_games
         if verbose:

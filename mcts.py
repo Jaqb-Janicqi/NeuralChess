@@ -1,4 +1,5 @@
 import numpy as np
+import time
 
 from actionspace import ActionSpace
 from cache import Cache
@@ -56,35 +57,54 @@ class MCTS():
         self.cache: Cache = cache
         self.num_searches = num_searches if num_searches else args['num_searches']
 
-    def search(self, state):
-        self.root = Node(self.args, state)
-        for _ in range(self.num_searches):
-            node = self.root
-            while node.children:
-                node = node.select()
-            value = node.simulate()
-            if not node.state.is_terminal:
-                legal_moves = node.state.get_legal_moves()
-                if self.model:
-                    if node.state.byte_rep in self.cache:
-                        legal_policy, value = self.cache[node.state.byte_rep]
-                    else:
-                        policy, policy_value = self.model(self.model.get_tensor_board(node.state.encode()))
-                        policy = self.model.get_policy(policy)
-                        policy_value = self.model.get_value(policy_value)                        
-                        legal_ids = np.array(
-                            [self.action_space.get_key(move) for move in legal_moves])
-                        legal_policy = np.zeros(self.action_space.size)
-                        legal_policy[legal_ids] = policy[legal_ids]
-                        legal_policy = legal_policy[legal_policy != 0]
-                        legal_policy = legal_policy / np.sum(legal_policy)
-                        self.cache[node.state.byte_rep] = (legal_policy, value)
+    def search_step(self):
+        node = self.root
+        while node.children:
+            node = node.select()
+        value = node.simulate()
+        if not node.state.is_terminal:
+            legal_moves = node.state.get_legal_moves()
+            if self.model:
+                if node.state.byte_rep in self.cache:
+                    legal_policy, value = self.cache[node.state.byte_rep]
                 else:
-                    legal_policy = np.ones(len(legal_moves)) / len(legal_moves)
-                node.expand(legal_policy, legal_moves)
-            node.backpropagate(value)
+                    policy, policy_value = self.model(self.model.get_tensor_board(node.state.encode()))
+                    policy = self.model.get_policy(policy)
+                    policy_value = self.model.get_value(policy_value)                        
+                    legal_ids = np.array(
+                        [self.action_space.get_key(move) for move in legal_moves])
+                    legal_policy = np.zeros(self.action_space.size)
+                    legal_policy[legal_ids] = policy[legal_ids]
+                    legal_policy = legal_policy[legal_policy != 0]
+                    legal_policy = legal_policy / np.sum(legal_policy)
+                    self.cache[node.state.byte_rep] = (legal_policy, value)
+            else:
+                legal_policy = np.ones(len(legal_moves)) / len(legal_moves)
+            node.expand(legal_policy, legal_moves)
+        node.backpropagate(value)
+
+    def get_dist(self):
         dist = np.zeros(self.action_space.size)
         for child in self.root.children:
             dist[self.action_space.get_key(child.action_taken)] = child.visit_count
         dist = dist / np.sum(dist)
-        return (self.root.state.encode(), dist, -self.root.value/self.root.visit_count)
+        return dist
+
+    def search(self, state):
+        # perform a search for num_searches
+        self.root = Node(self.args, state)
+        for _ in range(self.num_searches):
+            self.search_step(state)
+        return (self.root.state.encode(), self.get_dist(), -self.root.value/self.root.visit_count)
+    
+    def timed_search(self, state, time_limit):
+        # perform a search for time_limit ms
+        self.root = Node(self.args, state)
+        start = time.time() * 1000 # time in ms
+        while time.time() - start < time_limit:
+            self.search_step(state)
+        return (self.root.state.encode(), self.get_dist(), -self.root.value/self.root.visit_count)
+
+    def reset(self):
+        self.root = None
+        self.cache.clear()
