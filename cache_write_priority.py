@@ -6,7 +6,7 @@ from threading import Condition, Lock
 
 class Cache:
     def __init__(self, max_size: int) -> None:
-        """Thread safe LRU cache, prevents read when writing"""
+        """Thread safe LRU cache, write priority"""
         self.__read_ready = Condition(Lock())
         self.__writers: int = 0
         self.__readers: int = 0
@@ -109,7 +109,7 @@ class Cache:
                 return False
             self.__size -= sys.getsizeof(tpl)
             return True
-        
+
     def __remove(self, key) -> None:
         with self.__write():
             try:
