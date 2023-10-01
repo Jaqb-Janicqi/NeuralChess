@@ -6,7 +6,7 @@ from threading import Condition, Lock
 
 class Cache:
     def __init__(self, max_size: int) -> None:
-        """Thread safe LRU cache, read priority"""
+        """Thread safe LRU cache, read priority, set max size in MB"""
         self.__read_ready = Condition(Lock())
         self.__writers: int = 0
         self.__readers: int = 0
@@ -86,8 +86,8 @@ class Cache:
             self.__size += sys.getsizeof((key, value))
 
     def add(self, key, value) -> None:
-        if key in self.__cache:
-            return
+        """Add a key-value pair to the cache, respecting the max size"""
+
         with self.__write():
             if self.__size >= self.__max_size:
                 if not self.__evict():
@@ -96,11 +96,14 @@ class Cache:
             self.__size += sys.getsizeof((key, value))
 
     def clear(self) -> None:
+        """Clear the cache"""
+
         with self.__write():
             self.__cache.clear()
             self.__size = 0
 
     def __evict(self) -> None:
+        """Remove the least recently used key-value pair from the cache"""
         with self.__write():
             try:
                 tpl = self.__cache.popitem(last=False)
@@ -110,6 +113,7 @@ class Cache:
             return True
 
     def __remove(self, key) -> None:
+        """Remove a key-value pair from the cache"""
         with self.__write():
             try:
                 value = self.__cache.pop(key)
