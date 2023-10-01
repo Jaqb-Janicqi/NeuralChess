@@ -6,6 +6,7 @@ class ActionSpace():
         self.__actionspace: dict = dict()
         self.__key_map: dict = dict()
         self.__size: int = 0
+        self.calculate()
 
     def __getitem__(self, key) -> tuple:
         return self.__actionspace[key]
