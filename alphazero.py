@@ -7,7 +7,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import trange
 
-from cache import Cache
+from cache_write_priority import Cache
 from chess_game import Chess
 from mcts import MCTS
 from resnet import ResNet

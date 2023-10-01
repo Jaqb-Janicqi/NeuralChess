@@ -20,6 +20,10 @@ class State():
     @property
     def is_checkmate(self) -> bool:
         return self.__board.is_checkmate()
+    
+    @property
+    def is_terminal(self) -> bool:
+        return self.__board.is_game_over()
 
     @property
     def legal_moves(self) -> list:
@@ -28,3 +32,9 @@ class State():
     @property
     def fen(self) -> str:
         return self.__board.fen()
+
+    @property
+    def encoded(self) -> np.ndarray:
+        # transform position to white perspecitve if necessary
+        board = self.__board if self.__board.turn else self.__board.mirror()
+        # encode board

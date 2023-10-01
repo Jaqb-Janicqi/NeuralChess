@@ -5,7 +5,7 @@ from threading import Condition, Lock
 
 
 class Cache:
-    def __init__(self, max_size: int) -> None:
+    def __init__(self, max_size=100) -> None:
         """Thread safe LRU cache, read priority, set max size in MB"""
         self.__read_ready = Condition(Lock())
         self.__writers: int = 0

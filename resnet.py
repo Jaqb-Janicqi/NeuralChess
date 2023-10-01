@@ -63,8 +63,8 @@ class ResNet(nn.Module):
         v = self.value(x)
         return p, v
 
-    def get_tensor_board(self, board):
-        return torch.tensor(board).unsqueeze(0).unsqueeze(0).float().to(self.device)
+    def get_tensor_state(self, state):
+        return torch.tensor(state).unsqueeze(0).unsqueeze(0).float().to(self.device)
 
     def get_policy(self, p):
         return torch.softmax(p, 1).squeeze(0).detach().cpu().numpy()
