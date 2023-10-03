@@ -105,6 +105,7 @@ class Cache:
 
     def __evict(self) -> None:
         """Remove the least recently used key-value pair from the cache"""
+
         with self.__write():
             try:
                 tpl = self.__cache.popitem(last=False)
@@ -115,6 +116,7 @@ class Cache:
 
     def __remove(self, key) -> None:
         """Remove a key-value pair from the cache"""
+
         with self.__write():
             try:
                 value = self.__cache.pop(key)
