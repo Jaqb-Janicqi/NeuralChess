@@ -116,13 +116,15 @@ class MCTS():
         legal_policy = legal_policy / np.sum(legal_policy)
         return legal_policy, policy_value
 
-    def search_step(self) -> None:
+    def search_step(self, max_depth: int) -> None:
         """Perform a single tree search step"""
 
         # initialize node to root
         node = self.__root
         # select a leaf node
-        while node.children:
+        for _ in range(max_depth):
+            if not node.children:
+                break
             node = node.select()
         value = node.simulate()
         legal_moves = node.state.legal_moves
@@ -155,9 +157,11 @@ class MCTS():
         dist = dist / np.sum(dist)
         return dist
 
-    def initialize_root(self) -> None:
+    def initialize_root(self, reinitialize=False) -> None:
         """Expand root node if necessary"""
         
+        if reinitialize:
+            self.__root.children.clear()
         if self.__root.state.is_terminal or self.__root.children:
             return
 
@@ -187,9 +191,26 @@ class MCTS():
         self.set_root(state)
         self.initialize_root()
 
-    def search(self, num_searches=None) -> tuple:
+    def restrict_root(self, actions: list[chess.Move]) -> None:
+        """Restrict the root node to the given actions"""
+
+        # get the child node corresponding to the action
+        for child in self.__root.children:
+            # remove children not specified in actions
+            if child.action_taken not in actions:
+                self.root.children.remove(child)
+                break
+
+    def select_restricted_as_new_root(self) -> None:
+        """Select the child node as new root, provided that the root has one child"""
+
+        if len(self.__root.children) == 1:
+            self.__root = self.__root.children[0]
+            self.__root.set_parent(None)
+
+    def search(self, max_depth: int, num_searches=None) -> tuple:
         """
-        Perform a search for a given number of searches. 
+        Perform a search for a given number of searches up to given depth. 
         num_searches=args['num_searches'] by default
         """
 
@@ -198,16 +219,7 @@ class MCTS():
 
         # perform search
         for _ in range(num_searches):
-            self.search_step()
-        return (self.__root.state.encoded, self.get_dist(), -self.__root.value/self.__root.visit_count)
-
-    def timed_search(self, time_limit_ms: int) -> tuple:
-        """Perform a search for time_limit ms"""
-
-        # perform search
-        start = time.time()
-        while time.time() - start < time_limit_ms:
-            self.search_step()
+            self.search_step(max_depth)
         return (self.__root.state.encoded, self.get_dist(), -self.__root.value/self.__root.visit_count)
 
     def reset(self) -> None:
@@ -228,17 +240,8 @@ class MCTS():
 
         return len(self.__nodes)
 
+    @property
+    def root_fen(self) -> str:
+        """Return the fen of the root node"""
 
-if __name__ == "__main__":
-    board = chess.Board(
-        "r1qr1b2/1R3pkp/3p2pN/ppnPp1Q1/bn2P3/4P2P/pBBP2P1/5RK1 w - - 0 1")
-    action_space = ActionSpace()
-    model = ResNet(2, 4, action_space.size)
-    cache = Cache(100)
-    mcts = MCTS({"num_searches": 1000, "c_puct": 1},
-                action_space, cache, model)
-    mcts.search(State(board))
-    print(mcts.node_count)
-    dist = mcts.get_dist()
-    dist_nonzero = dist[dist != 0]
-    print(dist_nonzero)
+        return self.__root.state.fen
