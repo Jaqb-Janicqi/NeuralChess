@@ -98,6 +98,7 @@ class MCTS():
         self.__cache: Cache = cache
         self.__uniform_policy = np.ones(
             self.__action_space.size, dtype=np.float32) / self.__action_space.size
+        self.__depth_reached = 0
 
     def calculate_policy(self, node: Node, legal_moves: list) -> np.ndarray:
         """Calculate the policy and value of a given node"""
@@ -122,8 +123,11 @@ class MCTS():
         # initialize node to root
         node = self.__root
         # select a leaf node
-        for _ in range(max_depth):
+
+        depth_reached = 0
+        for depth in range(max_depth):
             if not node.children:
+                depth_reached = depth
                 break
             node = node.select()
         value = node.simulate()
@@ -147,6 +151,11 @@ class MCTS():
             node.expand(legal_policy, legal_moves, self.__nodes)
         node.backpropagate(value)
 
+        # update depth reached
+        if depth_reached > self.__depth_reached:
+            self.__depth_reached = depth_reached
+        return depth_reached
+
     def get_dist(self) -> np.ndarray:
         """Return the distribution of visits of leaf nodes"""
 
@@ -154,12 +163,11 @@ class MCTS():
         for child in self.__root.children:
             dist[self.__action_space.get_key(
                 child.action_taken)] = child.visit_count
-        dist = dist / np.sum(dist)
-        return dist
+        return dist / np.sum(dist)
 
     def initialize_root(self, reinitialize=False) -> None:
         """Expand root node if necessary"""
-        
+
         if reinitialize:
             self.__root.children.clear()
         if self.__root.state.is_terminal or self.__root.children:
@@ -182,6 +190,8 @@ class MCTS():
         else:
             self.__root = Node(self.args, state)
             self.__nodes[state.fen] = self.__root
+        # reset depth reached
+        self.__depth_reached = 0
 
     def root_from_fen(self, fen: str) -> None:
         """Set the root node to the given fen"""
@@ -222,6 +232,15 @@ class MCTS():
             self.search_step(max_depth)
         return (self.__root.state.encoded, self.get_dist(), -self.__root.value/self.__root.visit_count)
 
+    def best_move(self) -> tuple:
+        """Return the best move and the ponder move"""
+
+        bestmove = max(self.__root.children,
+                       key=lambda child: child.visit_count)
+        pondermove = max(bestmove.children,
+                         key=lambda child: child.visit_count)
+        return (bestmove.action_taken.uci(), pondermove.action_taken.uci())
+
     def reset(self) -> None:
         """Reset the tree and associated caches"""
 
@@ -245,3 +264,15 @@ class MCTS():
         """Return the fen of the root node"""
 
         return self.__root.state.fen
+
+    @property
+    def evaluation(self) -> float:
+        """Return the evaluation of the root node"""
+
+        return -self.__root.value/self.__root.visit_count
+
+    @property
+    def depth(self) -> int:
+        """Return the maximum depth reached in the tree"""
+
+        return self.__depth_reached
