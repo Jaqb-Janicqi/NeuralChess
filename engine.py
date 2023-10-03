@@ -17,7 +17,7 @@ from state import State
 
 
 class Engine():
-    def __init__(self, args, device="cpu") -> None:
+    def __init__(self, args=None, device="cpu") -> None:
         self.__args = args
         self.__device = device
         self.__info = {
@@ -30,6 +30,27 @@ class Engine():
 
     def __ready(self) -> None:
         """Initialize the engine"""
+
+        # check args
+        if self.__args is None:
+            self.__args = {
+                "num_searches": 2000,
+                "c_puct": 1,
+                "num_blocks": 10,
+                "num_channels": 256,
+                "model_path": "model.pt"
+            }
+        else:
+            if "num_searches" not in self.__args:
+                self.__args["num_searches"] = 2000
+            if "c_puct" not in self.__args:
+                self.__args["c_puct"] = 1
+            if "num_blocks" not in self.__args:
+                self.__args["num_blocks"] = 10
+            if "num_channels" not in self.__args:
+                self.__args["num_channels"] = 256
+            if "model_path" not in self.__args:
+                self.__args["model_path"] = "model.pt"
 
         self.__action_space = ActionSpace()
         # self.__model = ResNet(
@@ -156,6 +177,13 @@ class Engine():
                 pass
             self.__search_interrupt.set()
         self.__search_thread.join()
+
+        # retreive the search result, output bestmove and ponder if available
+        search_result = self.__search_result.get()
+        if search_result[1] is None:
+            print("bestmove", search_result[0])
+        else:
+            print("bestmove", search_result[0], "ponder", search_result[1])
 
     def __uci_go(self, go_command: str) -> None:
         """Parse the go command and perform the search"""
