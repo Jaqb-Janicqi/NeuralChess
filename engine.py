@@ -1,5 +1,11 @@
+import itertools
+import math
+import queue
 import select
 import sys
+import threading
+from time import perf_counter
+
 import chess
 import torch
 
@@ -14,6 +20,17 @@ class Engine():
     def __init__(self, args, device="cpu") -> None:
         self.__args = args
         self.__device = device
+        self.__info = {
+            "name": "Hubert++",
+            "author": "Jakub Janicki"
+        }
+
+        # select interface
+        self.__read_init()
+
+    def __ready(self) -> None:
+        """Initialize the engine"""
+
         self.__action_space = ActionSpace()
         # self.__model = ResNet(
         #     self.__args['num_blocks'], self.__args['num_channels'], self.__action_space.size, device)
@@ -22,7 +39,8 @@ class Engine():
         # self.__model.eval()
         # self.__mcts = MCTS(
         #     self.__args, self.__action_space, Cache(), self.__model)
-        self.__mcts = MCTS(self.__args, self.__action_space, Cache())
+        self.__mcts = MCTS(self.__args, self.__action_space,
+                           Cache(max_size=1024))
 
         self.__default_go_args = {
             "ponder_move": None,
@@ -30,31 +48,81 @@ class Engine():
             "btime": 0,
             "winc": 0,
             "binc": 0,
-            "depth": 0,
-            "nodes": args["num_searches"],
+            "depth": sys.maxsize ** 10,
+            "nodes": sys.maxsize ** 10,
             "movestogo": 0,
             "movetime": 0,
             "infinite": False
         }
-        go_args = self.__default_go_args.copy()
+        self.__go_args = self.__default_go_args.copy()
+        self.__search_interrupt = threading.Event()
+        self.__search_result = queue.Queue()
 
-    def get_best_move(self) -> chess.Move:
-        return self.__mcts.get_best_move()
+        print("readyok")
 
-    def search(self, fen=None) -> None:
-        pass
+    def __safe_input(self) -> str:
+        """Read input and handle KeyboardInterrupt, EOFError"""
+
+        try:
+            return input()
+        except (KeyboardInterrupt, EOFError):
+            return "Unknown"
+
+    def __calculate_search_time(self) -> int:
+        """Calculate the time avaible for the search"""
+
+        # get the time left for the current player
+        time_left = self.__go_args["wtime"] if self.__mcts.root.state.turn else self.__go_args["btime"]
+        # get the increment for the current player
+        increment = self.__go_args["winc"] if self.__mcts.root.state.turn else self.__go_args["binc"]
+        # return the time to search
+        return math.log2(time_left) + increment
+
+    def __perform_search(self) -> None:
+        """
+        Search for the best move until the stop event is set, 
+        put best and ponder moves to parent class queue
+        """
+
+        # copy max_depth and nodes from go_args
+        max_depth = self.__go_args["depth"]
+        max_nodes = self.__go_args["nodes"]
+
+        nodes_searched = 0
+        max_depth_this_search = 0
+        tic = perf_counter()
+
+        # search until the stop event is set
+        for node_num in range(max_nodes):
+            depth_reached = self.__mcts.search_step(max_depth)
+            # update search depth
+            if depth_reached > max_depth_this_search:
+                max_depth_this_search = depth_reached
+            # check if the search was interrupted
+            if self.__search_interrupt.is_set():
+                # reset the stop event and break
+                self.__search_interrupt.clear()
+                nodes_searched = node_num
+                break
+
+        best_move, ponder_move = self.__mcts.best_move()
+        toc = perf_counter()
+        time_ms = int((toc-tic)*1000)
+        nps = int(nodes_searched/(toc-tic))
+        print("info depth", self.__mcts.depth, "seldepth", max_depth_this_search, "nodes",
+              nodes_searched, "time", time_ms, "nps", nps)
+        self.__search_result.put((best_move, ponder_move))
 
     def ponder(self, fen_move) -> None:
         move = chess.Move.from_uci(fen_move)
         self.__mcts.restrict_root([move])
-        input_buffer = [sys.stdin]
+        max_depth = self.__go_args["depth"]
 
         # continue ponder search until the engine is interrupted
         while True:
             # check input buffer
-            ready = select.select(input_buffer, [], [], 0)[0]
-            if ready:
-                input_str = sys.stdin.readline().strip()
+            input_str = self.__safe_input()
+            if input_str:
                 if input_str == "ponderhit":
                     # user played the ponder move, transition to normal search
                     self.__mcts.select_restricted_as_new_root()
@@ -64,15 +132,39 @@ class Engine():
                     self.__mcts.root_from_fen(fen)
                     break
             else:
-                self.__mcts.search_step()
-        self.search()
+                self.__mcts.search_step(max_depth)
+        self.__perform_search()
 
-    def __uci_go(self, go_command) -> None:
-        go_args = self.__default_go_args.copy()
+    def __search(self) -> None:
+        """Manage the engine search thread and perform the search"""
+
+        # check if the engine is already searching
+        if self.__search_interrupt.is_set():
+            # stop the current search
+            self.__search_interrupt.set()
+            # wait for the search to stop
+            self.__search_thread.join()
+
+        # start the search
+        self.__search_thread = threading.Thread(target=self.__perform_search)
+        self.__search_thread.start()
+
+        # wait for the search to finish
+        if self.__go_args["infinte"]:
+            # wait for the stop command
+            while self.__check_input_buffer() != "stop":
+                pass
+            self.__search_interrupt.set()
+        self.__search_thread.join()
+
+    def __uci_go(self, go_command: str) -> None:
+        """Parse the go command and perform the search"""
+
+        self.__go_args = self.__default_go_args.copy()
         go_command_args = go_command.split()[1:]
         for i in range(0, len(go_command_args), 2):
             if go_command_args[i] == "ponder":
-                go_args["ponder_move"] = chess.Move.from_uci(
+                self.__go_args["ponder_move"] = chess.Move.from_uci(
                     go_command_args[i+1])
 
             elif go_command_args[i] == "searchmoves":
@@ -83,58 +175,83 @@ class Engine():
                 self.__mcts.restrict_root(moves)
 
             elif go_command_args[i] == "wtime":
-                go_args["wtime"] = int(go_command_args[i+1])
+                self.__go_args["wtime"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "btime":
-                go_args["btime"] = int(go_command_args[i+1])
+                self.__go_args["btime"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "winc":
-                go_args["winc"] = int(go_command_args[i+1])
+                self.__go_args["winc"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "binc":
-                go_args["binc"] = int(go_command_args[i+1])
+                self.__go_args["binc"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "depth":
-                go_args["depth"] = int(go_command_args[i+1])
+                self.__go_args["depth"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "nodes":
-                go_args["nodes"] = int(go_command_args[i+1])
+                self.__go_args["nodes"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "movestogo":
-                go_args["movestogo"] = int(go_command_args[i+1])
+                self.__go_args["movestogo"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "movetime":
-                go_args["movetime"] = int(go_command_args[i+1])
+                self.__go_args["movetime"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "infinite":
-                go_args["infinite"] = True
+                self.__go_args["infinite"] = True
 
-    def uci_read(self) -> None:
-        print("readok")
+        if self.__go_args["ponder_move"]:
+            self.ponder(self.__go_args["ponder_move"])
+        else:
+            self.__search()
+
+    def __uci(self) -> None:
+        """Handle uci command"""
+
+        # acknowledge uci interface
+        print("id name", self.__info["name"])
+        print("id author", self.__info["author"])
+        print("uciok")
+
+        while True:
+            command = self.__safe_input()
+            if command == "quit":
+                break
+
+            elif command == "isready":
+                self.__ready()
+                print("readyok")
+
+            elif command == "ucinewgame":
+                self.__mcts.reset()
+
+            # TODO "position startpos moves e2e4 e7e5"
+            elif command.startswith("position"):
+                fen = "".join(command.split(maxsplit=1)[1:])
+                if fen[0] == "startpos":
+                    fen = "startpos"
+                self.__mcts.root_from_fen(fen)
+
+            elif command.startswith("go"):
+                best_move, ponder = self.__uci_go(command)
+                print("bestmove", best_move, "ponder", ponder)
+
+    def __read_init(self) -> None:
+        """Read the init command"""
+
         while True:
             try:
                 command = input()
                 if command == "quit":
                     break
 
-                elif command == "isready":
-                    print("readyok")
-
-                elif command == "ucinewgame":
-                    self.__mcts.reset()
-
-                elif command.startswith("position"):
-                    fen = "".join(command.split(maxsplit=1)[1:])
-                    self.__mcts.root_from_fen(fen)
-
-                elif command.startswith("go"):
-                    best_move, ponder = self.uci_go(command)
-                    print("bestmove", best_move, "ponder", ponder)
+                elif command == "uci":
+                    self.__uci()
             except (KeyboardInterrupt, EOFError):
                 break
 
-
-"position r1qr1b2/1R3pkp/3p2pN/ppnPp1Q1/bn2P3/4P2P/pBBP2P1/5RK1 w - - 0 1"
-args = {"num_searches": 2000, "c_puct": 1}
-engine = Engine(args)
-engine.uci_read()
+# "position r1qr1b2/1R3pkp/3p2pN/ppnPp1Q1/bn2P3/4P2P/pBBP2P1/5RK1 w - - 0 1"
+# args = {"num_searches": 2000, "c_puct": 1}
+# engine = Engine(args)
+# engine.uci_read()
