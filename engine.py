@@ -241,7 +241,7 @@ class Engine():
             for thread in self.__search_threads:
                 thread.start()
 
-    def ponder(self, fen_move) -> None:
+    def __ponder(self, fen_move) -> None:
         move = chess.Move.from_uci(fen_move)
         self.__mcts.restrict_root([move])
         max_depth = self.__go_args["depth"]
@@ -361,7 +361,7 @@ class Engine():
                 self.__go_args["infinite"] = True
 
         if self.__go_args["ponder_move"]:
-            self.ponder(self.__go_args["ponder_move"])
+            self.__ponder(self.__go_args["ponder_move"])
         else:
             self.__init_search()
 
