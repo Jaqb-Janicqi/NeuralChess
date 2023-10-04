@@ -229,7 +229,7 @@ class Engine():
         max_nodes = self.__go_args["nodes"]
 
         # search until the stop event is set
-        while self.__nodes_searched < (max_nodes - self.__num_threads) and not self.__search_interrupt.is_set():
+        while self.__nodes_searched <= (max_nodes - self.__num_threads) and not self.__search_interrupt.is_set():
             depth = self.__mcts.search_step(max_depth)
             # update search depth
             if depth > self.__depth_reached:
