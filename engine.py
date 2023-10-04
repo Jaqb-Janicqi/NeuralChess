@@ -249,8 +249,6 @@ class Engine():
                 target=self.__perform_search, daemon=True)
             thread.start()
             self.__search_threads.append(thread)
-        for thread in self.__search_threads:
-            print(thread)
 
     def __ponder(self, fen_move) -> None:
         move = chess.Move.from_uci(fen_move)
@@ -308,16 +306,6 @@ class Engine():
         else:
             # wait for the search to finish by max nodes or stop command
             pass
-
-        # wait for the search to stop
-        # dead_threads = 0
-        # while dead_threads < len(self.__search_threads):
-        #     for thread_num in range(len(self.__search_threads)):
-        #         if self.__search_threads[thread_num].is_alive():
-        #             dead_threads = 0
-        #         else:
-        #             dead_threads += 1
-        #     sleep(0.0001)
 
         # wait for the search to stop
         for thread in self.__search_threads:
