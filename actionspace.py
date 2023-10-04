@@ -6,7 +6,7 @@ class ActionSpace():
         self.__actionspace: dict = dict()
         self.__key_map: dict = dict()
         self.__size: int = 0
-        self.calculate()
+        self.__load_from_file()
 
     def __getitem__(self, key) -> tuple:
         return self.__actionspace[key]
@@ -21,7 +21,18 @@ class ActionSpace():
     def get_key(self, obj) -> int:
         return self.__key_map[obj]
 
-    def calculate(self) -> None:
+    def __load_from_file(self) -> None:
+        """Load the action space from file if it exists, otherwise calculate it."""
+
+        try:
+            self.__load()
+        except FileNotFoundError:
+            self.__calculate()
+            self.__save()
+
+    def __calculate(self) -> None:
+        """Calculate the action space of chess."""
+
         # Create an empty chess board
         board = chess.Board()
         # Initialize an empty list to store all possible moves
@@ -54,6 +65,16 @@ class ActionSpace():
 
         for action in action_space:
             self.add(action)
+
+    def __save(self) -> None:
+        with open("actionspace.txt", "w") as f:
+            for i in range(self.__size):
+                f.write(f"{self.__actionspace[i]}\n")
+
+    def __load(self) -> None:
+        with open("actionspace.txt", "r") as f:
+            for line in f:
+                self.add(line.strip())
 
     @property
     def size(self) -> int:
