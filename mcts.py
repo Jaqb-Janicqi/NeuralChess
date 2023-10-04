@@ -99,7 +99,7 @@ class Node():
                     self.__children.append(nodes_dict[fen])
                 else:
                     new_node = Node(
-                        self.__args, next_state, action_taken=action, parent=self, policy_value=prob)
+                        self.__args, next_state, action_taken=action, policy_value=prob)
                     nodes_dict[fen] = new_node
                     self.__children.append(new_node)
 
@@ -107,8 +107,8 @@ class Node():
         """Select the child node with the highest UCB value, """
 
         # select child with best ucb value
-        with self.read():
-            best_child = max(self.__children, key=lambda child: child.ucb)
+        best_child = max(
+            self.__children, key=lambda child: child.ucb(self))
         return best_child
 
     def backpropagate(self, value: float, select_stack: list("Node")) -> None:
@@ -288,11 +288,16 @@ class MCTS():
         # select a leaf node
 
         depth_reached = 0
+        select_stack = [self.__root]
         for depth in range(max_depth):
             if not node.children:
                 depth_reached = depth
                 break
             node = node.select()
+            select_stack.append(node)
+        with self.write():
+            if self.__depth_reached < depth_reached:
+                self.__depth_reached = depth_reached
         value = node.simulate()
         legal_moves = node.state.legal_moves
 
@@ -312,7 +317,7 @@ class MCTS():
                 # get uniform policy
                 legal_policy = self.__uniform_policy
             node.expand(legal_policy, legal_moves, self.__nodes)
-        node.backpropagate(value)
+        node.backpropagate(value, select_stack)
 
         # update depth reached
         with self.write():

@@ -32,6 +32,10 @@ class State():
     @property
     def fen(self) -> str:
         return self.__board.fen()
+    
+    @property
+    def turn(self) -> bool:
+        return self.__board.turn
 
     @property
     def encoded(self) -> np.ndarray:

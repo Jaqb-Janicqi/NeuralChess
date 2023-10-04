@@ -24,4 +24,4 @@ cache_size: 512
 
 # allow the engine to utilize multiple threads for faster search
 # default: True
-multi_threaded: False
+multi_threaded: True
