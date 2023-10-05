@@ -1,6 +1,5 @@
 import chess
 import numpy as np
-from copy import deepcopy
 
 
 class State():
@@ -50,8 +49,9 @@ class State():
         white_mask = self.__board.occupied_co[chess.WHITE]
         black_mask = self.__board.occupied_co[chess.BLACK]
         turn = self.__board.turn
-        s_id = np.array([kings, queens, rooks, bishops, knights, pawns,
-                        fullmove, halfmove, ep_square, white_mask, black_mask, turn])
+        castling = self.__board.castling_rights
+        s_id = np.array([kings, queens, rooks, bishops, knights, pawns, fullmove,
+                        halfmove, ep_square, white_mask, black_mask, turn, castling])
         return s_id.tobytes()
 
     @property
@@ -63,10 +63,10 @@ class State():
         # transform position to white perspecitve if necessary
         board = self.__board if self.__board.turn else self.__board.mirror()
         # encode board
-
-
-if __name__ == "__main__":
-    b = chess.Board()
-    s = State(b)
-    s2 = deepcopy(s)
-    print(s.id == s2.id)
+        encoded = np.zeros((8, 8, 11), dtype=np.float16)
+        for i in range(64):
+            piece = board.piece_at(i)
+            if piece is not None:
+                encoded[i // 8, i % 8, piece.piece_type - 1 +
+                        6 * piece.color] = 1
+        # encode castling rights
