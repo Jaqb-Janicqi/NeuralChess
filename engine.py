@@ -6,6 +6,7 @@ import threading
 from contextlib import contextmanager
 from time import perf_counter, sleep
 import os
+import cProfile
 
 import chess
 import torch
@@ -289,8 +290,11 @@ class Engine():
             # clear the search interrupt event
             self.__search_interrupt.clear()
 
-        # start the search in multithreaded mode
-        self.__start_search_threads()
+        # # start the search in multithreaded mode
+        # self.__start_search_threads()
+        with cProfile.Profile() as pr:
+            pr.runctx('self._Engine__perform_search()', globals(), locals())
+            pr.print_stats()
 
         # wait for the search to finish
         if self.__go_args["infinite"]:
@@ -308,16 +312,6 @@ class Engine():
         else:
             # wait for the search to finish by max nodes or stop command
             pass
-
-        # wait for the search to stop
-        # dead_threads = 0
-        # while dead_threads < len(self.__search_threads):
-        #     for thread_num in range(len(self.__search_threads)):
-        #         if self.__search_threads[thread_num].is_alive():
-        #             dead_threads = 0
-        #         else:
-        #             dead_threads += 1
-        #     sleep(0.0001)
 
         # wait for the search to stop
         for thread in self.__search_threads:
@@ -343,6 +337,10 @@ class Engine():
             print("bestmove", bestmove)
         else:
             print("bestmove", bestmove, "ponder", pondermove)
+
+        # reset engine search stats
+        self.__nodes_searched = 0
+        self.__depth_reached = 0
 
     def __uci_go(self, go_command: str) -> None:
         """Parse the go command and perform the search"""
