@@ -20,52 +20,6 @@ class Node():
         self.__value: float = 0
         self.__policy_value: float = policy_value
         self.__visit_count: int = 0
-        self.__read_ready = Condition(Lock())
-        self.__readers: int = 0
-        self.__writers: int = 0
-
-    def __acquire_write(self) -> None:
-        """Acquire write lock"""
-
-        self.__read_ready.acquire()
-        try:
-            while self.__readers > 0 or self.__writers > 0:
-                self.__read_ready.wait()
-            self.__writers += 1
-        finally:
-            self.__read_ready.release()
-
-    def __release_write(self) -> None:
-        """Release write lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__writers -= 1
-            self.__read_ready.notify_all()
-        finally:
-            self.__read_ready.release()
-
-    def __acquire_read(self) -> None:
-        """Acquire read lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__readers += 1
-            while self.__writers > 0:
-                self.__read_ready.wait()
-        finally:
-            self.__read_ready.release()
-
-    def __release_read(self) -> None:
-        """Release read lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__readers -= 1
-            if self.__readers == 0:
-                self.__read_ready.notify_all()
-        finally:
-            self.__read_ready.release()
 
     def load_state(self) -> None:
         if not self.__state:
@@ -77,7 +31,6 @@ class Node():
         Add new nodes to nodes_dict.
         """
 
-        self.__acquire_write()
         for prob, action in zip(policy, actions):
             new_node = Node(args=self.__args, parent=self,
                             action_taken=action, policy_value=prob)
@@ -89,7 +42,6 @@ class Node():
             else:
                 nodes_dict[node_id] = new_node
                 self.__children.append(new_node)
-        self.__release_write()
 
     def select(self) -> "Node":
         """Select the child node with the highest UCB value, """
@@ -102,10 +54,8 @@ class Node():
     def backpropagate(self, value: float) -> None:
         """Backpropagate the value of the node to the root"""
 
-        self.__acquire_write()
         self.__visit_count += 1
         self.__value += value
-        self.__release_write()
         if self.__parent:
             self.__parent.backpropagate(-value)
 
@@ -123,28 +73,22 @@ class Node():
     def clear_children(self) -> None:
         """Clear the children of the node"""
 
-        self.__acquire_write()
         self.__children.clear()
-        self.__release_write()
 
     def remove_child(self, child: "Node") -> None:
         """Remove a child from the node"""
 
-        self.__acquire_write()
         self.__children.remove(child)
-        self.__release_write()
 
     def ucb(self, parent: "Node") -> float:
         """Calculate the UCB value of the node"""
 
-        self.__acquire_read()
         q = self.__value / (1 + self.__visit_count)
         if parent is None:
             u = 0
         else:
             u = self.__policy_value * self.__args["c_puct"] * \
                 sqrt(parent.visit_count) / (1 + self.__visit_count)
-        self.__release_read()
         return q + u
 
     @property
@@ -192,52 +136,6 @@ class MCTS():
         self.__uniform_policy = np.ones(
             self.__action_space.size, dtype=np.float32) / self.__action_space.size
         self.__depth_reached = 0
-        self.__read_ready = Condition(Lock())
-        self.__readers: int = 0
-        self.__writers: int = 0
-
-    def __acquire_write(self) -> None:
-        """Acquire write lock"""
-
-        self.__read_ready.acquire()
-        try:
-            while self.__readers > 0 or self.__writers > 0:
-                self.__read_ready.wait()
-            self.__writers += 1
-        finally:
-            self.__read_ready.release()
-
-    def __release_write(self) -> None:
-        """Release write lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__writers -= 1
-            self.__read_ready.notify_all()
-        finally:
-            self.__read_ready.release()
-
-    def __acquire_read(self) -> None:
-        """Acquire read lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__readers += 1
-            while self.__writers > 0:
-                self.__read_ready.wait()
-        finally:
-            self.__read_ready.release()
-
-    def __release_read(self) -> None:
-        """Release read lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__readers -= 1
-            if self.__readers == 0:
-                self.__read_ready.notify_all()
-        finally:
-            self.__read_ready.release()
 
     def calculate_policy(self, node: Node, legal_moves: list) -> np.ndarray:
         """Calculate the policy and value of a given node"""
@@ -269,10 +167,8 @@ class MCTS():
                 depth_reached = depth
                 break
             node = node.select()
-        self.__acquire_write()
         if self.__depth_reached < depth_reached:
             self.__depth_reached = depth_reached
-        self.__release_write()
         value = node.simulate()
         legal_moves = node.state.legal_moves
 
@@ -295,20 +191,16 @@ class MCTS():
         node.backpropagate(value)
 
         # update depth reached
-        self.__acquire_write()
         if depth_reached > self.__depth_reached:
             self.__depth_reached = depth_reached
-        self.__release_write()
 
     def get_dist(self) -> np.ndarray:
         """Return the distribution of visits of leaf nodes"""
 
         dist = np.zeros(self.__action_space.size)
-        self.__acquire_read()
         for child in self.__root.children:
             dist[self.__action_space.get_key(
                 child.action_taken)] = child.visit_count
-        self.__release_read()
         return dist / np.sum(dist)
 
     def initialize_root(self, reinitialize=False) -> None:
@@ -317,11 +209,8 @@ class MCTS():
         if reinitialize:
             self.__root.clear_children()
 
-        self.__acquire_read()
         if self.__root.state.is_terminal or self.__root.children:
-            self.__release_read()
             return
-        self.__release_read()
 
         if self.__model:
             legal_moves = self.__root.state.legal_moves
@@ -335,7 +224,6 @@ class MCTS():
     def set_root(self, state: State) -> None:
         """Set the root node to the given state"""
 
-        self.__acquire_write()
         if state.id in self.__nodes:
             self.__root = self.__nodes[state.id]
         else:
@@ -343,7 +231,6 @@ class MCTS():
             self.__nodes[state.id] = self.__root
         # reset depth reached
         self.__depth_reached = 0
-        self.__release_write()
 
     def root_from_fen(self, fen: str) -> None:
         """Set the root node to the given fen"""
@@ -365,18 +252,11 @@ class MCTS():
     def select_child_as_new_root(self, action: chess.Move) -> None:
         """Select the child node as new root"""
 
-        lock_released = False
-        self.__acquire_read()
         for child in self.__root.children:
             if child.action_taken == action:
-                lock_released = True
-                self.__release_read()
-                self.__acquire_write()
                 self.set_root(child.state)
                 self.__release_write()
                 break
-        if not lock_released:
-            self.__release_read()
 
     def best_move(self) -> tuple:
         """Return the best move and the ponder move"""
@@ -404,16 +284,12 @@ class MCTS():
     def reset_node_cache(self) -> None:
         """Reset the node cache"""
 
-        self.__acquire_write()
         self.__nodes.clear()
-        self.__release_write()
 
     def reset_evaluation_cache(self) -> None:
         """Reset the evaluation cache"""
 
-        self.__acquire_write()
         self.__cache.clear()
-        self.__release_write()
 
     def reset(self) -> None:
         """Reset the tree and associated caches"""
@@ -426,37 +302,25 @@ class MCTS():
     def node_count(self) -> int:
         """Return the number of nodes in the tree"""
 
-        self.__acquire_read()
-        len = len(self.__nodes)
-        self.__release_read()
-        return len
+        return len(self.__nodes)
 
     @property
     def root_fen(self) -> str:
         """Return the fen of the root node"""
 
-        self.__acquire_read()
-        fen = self.__root.state.fen
-        self.__release_read()
-        return fen
+        return self.__root.state.fen
 
     @property
     def evaluation(self) -> float:
         """Return the evaluation of the root node as a value between -1 and 1"""
 
-        self.__acquire_read()
-        evaluation = -self.__root.value/self.__root.visit_count
-        self.__release_read()
-        return evaluation
+        return -self.__root.value/self.__root.visit_count
 
     @property
     def depth(self) -> int:
         """Return the maximum depth reached in the tree"""
 
-        self.__acquire_read()
-        depth = self.__depth_reached
-        self.__release_read()
-        return depth
+        return self.__depth_reached
 
     @property
     def root(self) -> bool:

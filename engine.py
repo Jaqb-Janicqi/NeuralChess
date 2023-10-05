@@ -33,9 +33,6 @@ class Engine():
         }
         self.__debug = False
         self.__infinity = sys.maxsize ** 10
-        self.__readers: int = 0
-        self.__writers: int = 0
-        self.__read_ready = threading.Condition(threading.Lock())
 
         # select interface
         self.__read_init()
@@ -58,67 +55,6 @@ class Engine():
             self.__args["model_path"] = "model.pt"
         if "cache_size" not in self.__args:
             self.__args["cache_size"] = 512
-        if "multi_threaded" not in self.__args:
-            self.__args["multi_threaded"] = False
-
-    def __acquire_write(self) -> None:
-        """Acquire write lock"""
-
-        self.__read_ready.acquire()
-        try:
-            while self.__readers > 0 or self.__writers > 0:
-                self.__read_ready.wait()
-            self.__writers += 1
-        finally:
-            self.__read_ready.release()
-
-    def __release_write(self) -> None:
-        """Release write lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__writers -= 1
-            self.__read_ready.notify_all()
-        finally:
-            self.__read_ready.release()
-
-    def __acquire_read(self) -> None:
-        """Acquire read lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__readers += 1
-            while self.__writers > 0:
-                self.__read_ready.wait()
-        finally:
-            self.__read_ready.release()
-
-    def __release_read(self) -> None:
-        """Release read lock"""
-
-        self.__read_ready.acquire()
-        try:
-            self.__readers -= 1
-            if self.__readers == 0:
-                self.__read_ready.notify_all()
-        finally:
-            self.__read_ready.release()
-
-    @contextmanager
-    def __read(self) -> None:
-        """Read context manager"""
-
-        self.__acquire_read()
-        yield
-        self.__release_read()
-
-    @contextmanager
-    def __write(self) -> None:
-        """Write context manager"""
-
-        self.__acquire_write()
-        yield
-        self.__release_write()
 
     def __ready(self) -> None:
         """Initialize the engine"""
@@ -160,18 +96,10 @@ class Engine():
             "infinite": False
         }
         self.__go_args = self.__default_go_args.copy()
-
-        self.__num_threads = multiprocessing.cpu_count()
-        self.__search_threads = []
-        self.__search_interrupt = threading.Event()
         self.__nodes_searched = 0
         self.__depth_reached = 0
         self.__search_start_time = None
-        self.__info_write_lock = threading.Lock()
-
-        # check multi_threaded flag
-        if not self.__args["multi_threaded"]:
-            self.__num_threads = 1
+        self.__search_interrupt = threading.Event()
         # engine is ready
 
     def __safe_input(self) -> str:
@@ -230,47 +158,48 @@ class Engine():
         max_nodes = self.__go_args["nodes"]
 
         # search until the stop event is set
-        while self.__nodes_searched <= (max_nodes - self.__num_threads) and not self.__search_interrupt.is_set():
-            depth = self.__mcts.search_step(max_depth)
-            # update search depth
-            if depth > self.__depth_reached:
-                with self.__info_write_lock:
-                    self.__depth_reached = depth
-            with self.__info_write_lock:
-                self.__nodes_searched += 1
+        while self.__nodes_searched < max_nodes:
+            self.__mcts.search_step(max_depth)
+            self.__nodes_searched += 1
+        self.__depth_reached = self.__mcts.depth
 
-    def __start_search_threads(self) -> None:
-        """Start the search threads"""
+    def __perform_ponder_search(self) -> None:
+        """Search for the best move until the stop event is set"""
 
-        # remove the old search threads
-        self.__search_threads.clear()
-        # create new search threads
-        for _ in range(self.__num_threads):
-            thread = threading.Thread(
-                target=self.__perform_search, daemon=True)
-            thread.start()
-            self.__search_threads.append(thread)
+        # search until the stop event is set
+        while not self.__search_interrupt.is_set():
+            self.__mcts.search_step()
+            self.__nodes_searched += 1
+        self.__depth_reached = self.__mcts.depth
 
     def __ponder(self, fen_move) -> None:
         move = chess.Move.from_uci(fen_move)
         self.__mcts.restrict_root([move])
-        max_depth = self.__go_args["depth"]
 
+        # start search_thread
+        search_thread = threading.Thread(
+            target=self.__perform_ponder_search, daemon=True)
+        search_thread.start()
+
+        input_str = ""
         # continue ponder search until the engine is interrupted
         while True:
             # check input buffer
             input_str = self.__safe_input()
-            if input_str:
-                if input_str == "ponderhit":
-                    # user played the ponder move, transition to normal search
-                    self.__mcts.select_child_as_new_root(move)
-                    break
-                elif input_str.startswith("position"):
-                    fen = "".join(input_str.split(maxsplit=1)[1:])
-                    self.__mcts.root_from_fen(fen)
-                    break
-            else:
-                self.__mcts.search_step(max_depth)
+            if input_str == "ponderhit" or input_str.startswith("position"):
+                break
+
+        # stop the search
+        self.__search_interrupt.set()
+        search_thread.join()
+        if input_str == "ponderhit":
+            # ponderhit received, continue pondering
+            self.__mcts.select_child_as_new_root(move)
+        else:
+            fen = "".join(input_str.split(maxsplit=1)[1:])
+            self.__mcts.root_from_fen(fen)
+
+        # switch to normal search
         self.__init_search()
 
     def __init_search(self) -> None:
@@ -279,16 +208,10 @@ class Engine():
         # start tracking the search time
         self.__search_start_time = perf_counter()
 
-        # check if the engine is already searching
-        if self.__search_interrupt.is_set():
-            # wait for the search to stop
-            for thread in self.__search_threads:
-                if thread.is_alive():
-                    thread.join()
-            # clear the search interrupt event
-            self.__search_interrupt.clear()
+        # start the search in single thread
+        # thread = threading.Thread(
+        #     target=self.__perform_search, daemon=True)
 
-        # # start the search in multithreaded mode
         # self.__start_search_threads()
         with cProfile.Profile() as pr:
             pr.runctx('self._Engine__perform_search()', globals(), locals())
@@ -312,17 +235,14 @@ class Engine():
             pass
 
         # wait for the search to stop
-        for thread in self.__search_threads:
-            if thread.is_alive():
-                thread.join()
-
+        # thread.join()
+        search_end = perf_counter()
         self.__search_interrupt.clear()
 
         # retreive the search result, output bestmove and ponder if available
         bestmove, pondermove = self.__mcts.best_move()
 
         # end the search and update time in go_args
-        search_end = perf_counter()
         self.__print_search_info(search_end)
         search_time = search_end - self.__search_start_time
         player = self.__mcts.root.state.turn
