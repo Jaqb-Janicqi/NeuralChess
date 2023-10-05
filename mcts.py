@@ -12,8 +12,9 @@ from state import State
 
 
 class Node():
-    def __init__(self, args, state, action_taken=None, policy_value=0) -> None:
+    def __init__(self, args, parent=None, state=None, action_taken=None, policy_value=0) -> None:
         self.__args = args
+        self.__parent: Node = parent
         self.__children: list = []
         self.__state: State = state
         self.__action_taken: chess.Move = action_taken
@@ -83,6 +84,10 @@ class Node():
         yield
         self.__release_write()
 
+    def load_state(self) -> None:
+        if not self.__state:
+            self.__state = self.__parent.state.next_state(self.__action_taken)
+
     def expand(self, policy, actions, nodes_dict) -> None:
         """
         Expand the node with the given policy and actions. 
@@ -91,16 +96,16 @@ class Node():
 
         with self.write():
             for prob, action in zip(policy, actions):
-                next_state = self.__state.next_state(action)
+
+                new_node = Node(args=self.__args, parent=self,
+                                action_taken=action, policy_value=prob)
 
                 # to narrow the search space, connect branches that lead to the same state
-                fen = next_state.fen
-                if fen in nodes_dict:
-                    self.__children.append(nodes_dict[fen])
+                node_id = new_node.state.id
+                if node_id in nodes_dict:
+                    self.__children.append(nodes_dict[node_id])
                 else:
-                    new_node = Node(
-                        self.__args, next_state, action_taken=action, policy_value=prob)
-                    nodes_dict[fen] = new_node
+                    nodes_dict[node_id] = new_node
                     self.__children.append(new_node)
 
     def select(self) -> "Node":
@@ -111,15 +116,14 @@ class Node():
             self.__children, key=lambda child: child.ucb(self))
         return best_child
 
-    def backpropagate(self, value: float, select_stack: list("Node")) -> None:
+    def backpropagate(self, value: float) -> None:
         """Backpropagate the value of the node to the root"""
 
         with self.write():
             self.__visit_count += 1
             self.__value += value
-        if select_stack:
-            parent = select_stack.pop()
-            parent.backpropagate(-value, select_stack)
+        if self.__parent:
+            self.__parent.backpropagate(-value)
 
     def simulate(self) -> int:
         """Simulate a game from the current state"""
@@ -178,6 +182,7 @@ class Node():
     def state(self) -> State:
         """Return the state of the node"""
 
+        self.load_state()
         return self.__state
 
     @property
@@ -191,7 +196,7 @@ class MCTS():
     """Monte Carlo Tree Search with optional ResNet model and evaluation cache"""
 
     def __init__(self, args, action_space, cache, model=None) -> None:
-        self.args = args
+        self.__args = args
         self.__model: ResNet = model
         self.__root: Node = None
         self.__nodes: dict = dict()
@@ -288,13 +293,11 @@ class MCTS():
         # select a leaf node
 
         depth_reached = 0
-        select_stack = [self.__root]
         for depth in range(max_depth):
             if not node.children:
                 depth_reached = depth
                 break
             node = node.select()
-            select_stack.append(node)
         with self.write():
             if self.__depth_reached < depth_reached:
                 self.__depth_reached = depth_reached
@@ -305,19 +308,19 @@ class MCTS():
         if not value:
             # use uniform policy if no model is provided
             if self.__model:
-                fen = node.state.fen
+                node_id = node.state.id
                 # check cache for policy, skip calculation if found
-                legal_policy = self.__cache[fen]
+                legal_policy = self.__cache[node_id]
                 if legal_policy is None:
                     legal_policy, value = self.calculate_policy(
                         node, legal_moves)
                     # add policy cache
-                    self.__cache[fen] = legal_policy
+                    self.__cache[node_id] = legal_policy
             else:
                 # get uniform policy
                 legal_policy = self.__uniform_policy
             node.expand(legal_policy, legal_moves, self.__nodes)
-        node.backpropagate(value, select_stack)
+        node.backpropagate(value)
 
         # update depth reached
         with self.write():
@@ -340,6 +343,7 @@ class MCTS():
 
         if reinitialize:
             self.__root.clear_children()
+
         if self.__root.state.is_terminal or self.__root.children:
             return
 
@@ -356,11 +360,11 @@ class MCTS():
         """Set the root node to the given state"""
 
         with self.write():
-            if state.fen in self.__nodes:
-                self.__root = self.__nodes[state.fen]
+            if state.id in self.__nodes:
+                self.__root = self.__nodes[state.id]
             else:
-                self.__root = Node(self.args, state)
-                self.__nodes[state.fen] = self.__root
+                self.__root = Node(args=self.__args, parent=None, state=state)
+                self.__nodes[state.id] = self.__root
             # reset depth reached
             self.__depth_reached = 0
 
@@ -397,7 +401,7 @@ class MCTS():
         """
 
         if not num_searches:
-            num_searches = self.args["num_searches"]
+            num_searches = self.__args["num_searches"]
 
         # perform search
         for _ in range(num_searches):
@@ -407,8 +411,12 @@ class MCTS():
     def best_move(self) -> tuple:
         """Return the best move and the ponder move"""
 
+        if not self.__root.children:
+            return None, None
         bestchild = max(self.__root.children,
                         key=lambda child: child.visit_count)
+        if not bestchild.children:
+            return bestchild.action_taken.uci(), None
         ponderchild = max(bestchild.children,
                           key=lambda child: child.visit_count)
         return (bestchild.action_taken.uci(), ponderchild.action_taken.uci())
