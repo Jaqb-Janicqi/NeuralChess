@@ -250,8 +250,6 @@ class Engine():
                 target=self.__perform_search, daemon=True)
             thread.start()
             self.__search_threads.append(thread)
-        for thread in self.__search_threads:
-            print(thread)
 
     def __ponder(self, fen_move) -> None:
         move = chess.Move.from_uci(fen_move)
