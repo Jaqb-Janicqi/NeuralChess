@@ -5,6 +5,7 @@ import numpy as np
 class State():
     def __init__(self, board) -> None:
         self.__board: chess.Board = board
+        self.__id = None
 
     def push(self, action) -> None:
         self.__board.push(action)
@@ -37,6 +38,9 @@ class State():
     def id(self):
         """Returns a unique id str for the current state."""
 
+        if self.__id:
+            return self.__id
+
         kings = self.__board.kings
         queens = self.__board.queens
         rooks = self.__board.rooks
@@ -52,7 +56,8 @@ class State():
         castling = self.__board.castling_rights
         s_id = np.array([kings, queens, rooks, bishops, knights, pawns, fullmove,
                         halfmove, ep_square, white_mask, black_mask, turn, castling])
-        return s_id.tobytes()
+        self.__id = s_id.tobytes()
+        return self.__id
 
     @property
     def turn(self) -> bool:
