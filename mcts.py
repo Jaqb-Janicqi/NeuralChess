@@ -1,5 +1,4 @@
 from math import sqrt
-from threading import Condition, Lock
 
 import chess
 import numpy as np

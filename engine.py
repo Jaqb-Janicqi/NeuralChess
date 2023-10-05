@@ -1,12 +1,10 @@
+import cProfile
 import math
-import multiprocessing
-import queue
+import os
 import sys
 import threading
 from contextlib import contextmanager
 from time import perf_counter, sleep
-import os
-import cProfile
 
 import chess
 import torch
