@@ -26,7 +26,7 @@ class Engine():
             "author": "Jakub Janicki"
         }
         self.__model_params = {
-            "num_blocks": 16,
+            "num_blocks": 19,
             "num_channels": 256
         }
         self.__debug = False
@@ -115,10 +115,10 @@ class Engine():
     def __print_search_info(self, time_now: int) -> None:
         """Print the info about the search"""
 
-        time_diff = time_now - self.__search_start_time
+        search_time = (time_now - self.__search_start_time) * 1000
         nps = int(
-            self.__nodes_searched / time_diff)
-        print("info depth", self.__depth_reached, "nodes", self.__nodes_searched, "time", time_diff,
+            self.__nodes_searched / search_time)
+        print("info depth", self.__depth_reached, "nodes", self.__nodes_searched, "time", search_time,
               "score cp", self.__get_cp_score(), "nps", nps, "pv", self.__mcts.best_line())
 
     def __calculate_search_time(self) -> int:
@@ -156,7 +156,7 @@ class Engine():
         max_nodes = self.__go_args["nodes"]
 
         # search until the stop event is set
-        while self.__nodes_searched < max_nodes:
+        while self.__nodes_searched < max_nodes and not self.__search_interrupt.is_set():
             self.__mcts.search_step(max_depth)
             self.__nodes_searched += 1
         self.__depth_reached = self.__mcts.depth
@@ -207,13 +207,9 @@ class Engine():
         self.__search_start_time = perf_counter()
 
         # start the search in single thread
-        # thread = threading.Thread(
-        #     target=self.__perform_search, daemon=True)
-
-        # self.__start_search_threads()
-        with cProfile.Profile() as pr:
-            pr.runctx('self._Engine__perform_search()', globals(), locals())
-            pr.print_stats()
+        thread = threading.Thread(
+            target=self.__perform_search, daemon=True)
+        thread.start()
 
         # wait for the search to finish
         if self.__go_args["infinite"]:
@@ -221,19 +217,19 @@ class Engine():
             while self.__safe_input() != "stop":
                 pass
             self.__search_interrupt.set()
-        elif self.__go_args["nodes"] == self.__infinity:
+        elif self.__go_args["nodes"] == self.__infinity or self.__go_args["movetime"] != 0:
             # calculate the time to search
             search_time = self.__calculate_search_time()
             # wait for the search to finish
             while perf_counter() - self.__search_start_time < search_time:
-                pass
+                sleep(0.0001)
             self.__search_interrupt.set()
         else:
             # wait for the search to finish by max nodes or stop command
             pass
 
         # wait for the search to stop
-        # thread.join()
+        thread.join()
         search_end = perf_counter()
         self.__search_interrupt.clear()
 
@@ -242,7 +238,7 @@ class Engine():
 
         # end the search and update time in go_args
         self.__print_search_info(search_end)
-        search_time = search_end - self.__search_start_time
+        search_time = (search_end - self.__search_start_time) * 1000
         player = self.__mcts.root.state.turn
         if player:
             self.__go_args["wtime"] -= search_time
@@ -297,7 +293,7 @@ class Engine():
                 self.__go_args["movestogo"] = int(go_command_args[i+1])
 
             elif go_command_args[i] == "movetime":
-                self.__go_args["movetime"] = int(go_command_args[i+1])
+                self.__go_args["movetime"] = int(go_command_args[i+1]) / 1000
 
             elif go_command_args[i] == "infinite":
                 self.__go_args["infinite"] = True
