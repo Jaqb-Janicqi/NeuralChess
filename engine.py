@@ -1,6 +1,7 @@
 import cProfile
 import math
 import os
+import select
 import sys
 import threading
 from contextlib import contextmanager
@@ -31,6 +32,8 @@ class Engine():
         }
         self.__debug = False
         self.__infinity = sys.maxsize ** 10
+        self.__input_interrupt = threading.Event()
+        self.__search_interrupt = threading.Event()
 
         # select interface
         self.__read_init()
@@ -97,28 +100,36 @@ class Engine():
         self.__nodes_searched = 0
         self.__depth_reached = 0
         self.__search_start_time = None
-        self.__search_interrupt = threading.Event()
         # engine is ready
 
     def __safe_input(self) -> str:
         """Read input, handle "quit" command, KeyboardInterrupt and EOFError"""
 
         try:
-            input_str = input()
+            input_str = ""
+            while not self.__input_interrupt.is_set():
+                input_chr = sys.stdin.read(1)
+                if input_chr == "\n":
+                    break
+                input_str += input_chr
             if input_str == "quit".casefold():
                 raise KeyboardInterrupt
             return input_str
         except (KeyboardInterrupt, EOFError):
             # exit the engine
-            sys.exit(0)
+            self.__search_interrupt.set()
+            raise SystemExit
+
+    def __wait(self):
+        sleep(0.00001)
 
     def __print_search_info(self, time_now: int) -> None:
         """Print the info about the search"""
 
-        search_time = (time_now - self.__search_start_time) * 1000
+        search_time = time_now - self.__search_start_time
         nps = int(
             self.__nodes_searched / search_time)
-        print("info depth", self.__depth_reached, "nodes", self.__nodes_searched, "time", search_time,
+        print("info depth", self.__depth_reached, "nodes", self.__nodes_searched, "time", search_time * 1000,
               "score cp", self.__get_cp_score(), "nps", nps, "pv", self.__mcts.best_line())
 
     def __calculate_search_time(self) -> int:
@@ -132,6 +143,8 @@ class Engine():
         # get the increment for the current player
         increment = self.__go_args["winc"] if self.__mcts.root.state.turn else self.__go_args["binc"]
         # return the time to search
+        if time_left <= 0:
+            return 0
         return math.log2(time_left) + increment
 
     def __get_cp_score(self) -> int:
@@ -166,18 +179,17 @@ class Engine():
 
         # search until the stop event is set
         while not self.__search_interrupt.is_set():
-            self.__mcts.search_step()
+            self.__mcts.search_step(self.__infinity)
             self.__nodes_searched += 1
         self.__depth_reached = self.__mcts.depth
 
-    def __ponder(self, fen_move) -> None:
-        move = chess.Move.from_uci(fen_move)
+    def __ponder(self, move) -> None:
         self.__mcts.restrict_root([move])
 
         # start search_thread
-        search_thread = threading.Thread(
+        ponder_thread = threading.Thread(
             target=self.__perform_ponder_search, daemon=True)
-        search_thread.start()
+        ponder_thread.start()
 
         input_str = ""
         # continue ponder search until the engine is interrupted
@@ -185,11 +197,11 @@ class Engine():
             # check input buffer
             input_str = self.__safe_input()
             if input_str == "ponderhit" or input_str.startswith("position"):
+                self.__search_interrupt.set()
                 break
 
         # stop the search
-        self.__search_interrupt.set()
-        search_thread.join()
+        ponder_thread.join()
         if input_str == "ponderhit":
             # ponderhit received, continue pondering
             self.__mcts.select_child_as_new_root(move)
@@ -199,6 +211,16 @@ class Engine():
 
         # switch to normal search
         self.__init_search()
+
+    def __handle_timer(self) -> None:
+        """Handle the timer of timed search"""
+
+        # calculate the time to search
+        search_time = self.__calculate_search_time()
+        # wait for the search to finish
+        while perf_counter() - self.__search_start_time < search_time:
+            self.__wait()
+        self.__search_interrupt.set()
 
     def __init_search(self) -> None:
         """Manage the engine search threads and perform the search"""
@@ -218,20 +240,32 @@ class Engine():
                 pass
             self.__search_interrupt.set()
         elif self.__go_args["nodes"] == self.__infinity or self.__go_args["movetime"] != 0:
-            # calculate the time to search
-            search_time = self.__calculate_search_time()
-            # wait for the search to finish
-            while perf_counter() - self.__search_start_time < search_time:
-                sleep(0.0001)
-            self.__search_interrupt.set()
-        else:
             # wait for the search to finish by max nodes or stop command
+            timer_thread = threading.Thread(
+                target=self.__handle_timer, daemon=True)
+            timer_thread.start()
+
+            # await quit or search finish
+            quit_thread = threading.Thread(
+                target=self.__safe_input, daemon=True)
+            quit_thread.start()
+
+            while thread.is_alive():
+                # wait for thread to finish or SystemExit except to be raised from subthread
+                self.__wait()
+                if not quit_thread.is_alive():
+                    sys.exit(0)
+                pass
+            self.__input_interrupt.set()
+            timer_thread.join()
+        else:
             pass
 
         # wait for the search to stop
         thread.join()
         search_end = perf_counter()
         self.__search_interrupt.clear()
+        self.__input_interrupt.clear()
 
         # retreive the search result, output bestmove and ponder if available
         bestmove, pondermove = self.__mcts.best_move()
