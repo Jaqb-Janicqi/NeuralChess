@@ -5,8 +5,8 @@ import torch.nn as nn
 class ResBlock(nn.Module):
     def __init__(self, num_features):
         super().__init__()
-        self.conv1 = nn.Conv2d(num_features, num_features, 3, 1, 1)
-        self.conv2 = nn.Conv2d(num_features, num_features, 3, 1, 1)
+        self.conv1 = nn.Conv2d(num_features, num_features, 3, 1, 0)
+        self.conv2 = nn.Conv2d(num_features, num_features, 3, 1, 0)
         self.bnorm1 = nn.BatchNorm2d(num_features)
         self.bnorm2 = nn.BatchNorm2d(num_features)
         self.relu = nn.ReLU()
@@ -28,7 +28,7 @@ class ResNet(nn.Module):
         super().__init__()
         self.device = device
         self.start_block = nn.Sequential(
-            nn.Conv2d(1, num_features, 3, 1, 1),
+            nn.Conv2d(1, num_features, 3),
             nn.BatchNorm2d(num_features),
             nn.ReLU()
         )
@@ -36,20 +36,20 @@ class ResNet(nn.Module):
             [ResBlock(num_features) for _ in range(num_blocks)]
         )
         self.policy = nn.Sequential(
-            nn.Conv2d(num_features, num_features, 1, 1, 0),
-            nn.BatchNorm2d(num_features),
-            nn.ReLU(),
-            nn.Conv2d(num_features, num_features, 1, 1, 0),
+            nn.Conv2d(num_features, num_features, 1),
+            nn.Conv2d(num_features, num_features, 1),
             nn.BatchNorm2d(num_features),
             nn.ReLU(),
             nn.Flatten(),
             nn.Linear(num_features*policy_size, policy_size)
         )
         self.value = nn.Sequential(
-            nn.Conv2d(num_features, 1, 1, 1, 0),
+            nn.Conv2d(num_features, 1, 1),
             nn.BatchNorm2d(1),
             nn.ReLU(),
             nn.Flatten(),
+            nn.Linear(num_features*policy_size, num_features*policy_size),
+            nn.ReLU(),
             nn.Linear(num_features*policy_size, 1),
             nn.Tanh()
         )
