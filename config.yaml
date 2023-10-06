@@ -1,0 +1,27 @@
+# num_searches - default number of searches performed by the en.gine, per position,
+# unless uci specifies a different number or infinite search
+# default: 4000
+num_searches: 4000
+
+# c_puct - exploration factor of the engine.
+# It is not recommended to use values outside the range (0.5, 2).
+# Lower Values (e.g., 0.5 - 1.0) may result in less accurate, but more diverse and interesting play.
+# Higher Values (e.g., 1.5 - 2.0) may result in deeper search of the most promising lines, improving accuracy.
+# default: 1
+c_puct: 1
+
+# model_path - path to your NN model.
+# default: model.pt
+model_path: model.pt
+
+# cache_size: size of the internal inference cache in Mb.
+# The engine stores results of inference in an internal cache.
+# This cache is required for the engine to acheive a meaningful result.
+# It is not recommended to go below 128Mb for normal matches, and below 512Mb for analysis.
+# Increasing this value further should not be required under normal circumstances.
+# default: 512
+cache_size: 512
+
+# allow the engine to utilize multiple threads for faster search
+# default: True
+multi_threaded: True
