@@ -2,6 +2,12 @@ import chess
 import numpy as np
 
 
+def bb_to_matrix(bb: np.uint64) -> np.ndarray:
+    """Converts a bitboard to a 8x8 matrix."""
+
+    return np.unpackbits(np.frombuffer(bb.tobytes(), dtype=np.uint8)).astype(np.float16).reshape(8, 8)
+
+
 class State():
     def __init__(self, board) -> None:
         self.__board: chess.Board = board
@@ -65,13 +71,41 @@ class State():
 
     @property
     def encoded(self) -> np.ndarray:
-        # transform position to white perspecitve if necessary
+        """Returns a 13x8x8 matrix representing the current state, from white perspective."""
+
+        # get board from white perspective
         board = self.__board if self.__board.turn else self.__board.mirror()
-        # encode board
-        encoded = np.zeros((8, 8, 11), dtype=np.float16)
-        for i in range(64):
-            piece = board.piece_at(i)
-            if piece is not None:
-                encoded[i // 8, i % 8, piece.piece_type - 1 +
-                        6 * piece.color] = 1
-        # encode castling rights
+        # get board attributes
+        castling_bb = np.uint64(board.castling_rights)
+        fullmove_bb = self.__board.fullmove_number
+        halfmove_bb = self.__board.halfmove_clock
+        ep_square_bb = self.__board.ep_square
+        if not ep_square_bb:
+            ep_square_bb = 0
+        # get pieces
+        piece_bbs = [
+            self.__board.kings,
+            self.__board.queens,
+            self.__board.rooks,
+            self.__board.bishops,
+            self.__board.knights,
+            self.__board.pawns
+        ]
+        # convert bitboards to matrices
+        matrices = []
+        # convert pieces
+        for color in range(2):
+            for piece in range(6):
+                matrices.append(bb_to_matrix(
+                    np.uint64(piece_bbs[piece] & board.occupied_co[color])))
+        # create ep_square matrix
+        matrices.append(bb_to_matrix(np.uint64(ep_square_bb)))
+        # convert castling
+        matrices.append(bb_to_matrix(np.uint64(castling_bb)))
+        # create fullmove matrix
+        fullmove_matrix = np.full((8, 8), fullmove_bb, dtype=np.float16)
+        matrices.append(fullmove_matrix)
+        # create halfmove matrix
+        halfmove_matrix = np.full((8, 8), halfmove_bb, dtype=np.float16)
+        matrices.append(halfmove_matrix)
+        return np.array(matrices)
