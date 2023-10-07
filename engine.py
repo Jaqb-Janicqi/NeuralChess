@@ -1,10 +1,7 @@
-import cProfile
 import math
 import os
-import select
 import sys
 import threading
-from contextlib import contextmanager
 from time import perf_counter, sleep
 
 import chess
@@ -15,7 +12,6 @@ from actionspace import ActionSpace
 from cache_read_priority import Cache
 from mcts import MCTS
 from resnet import ResNet
-from state import State
 
 
 class Engine():
@@ -152,11 +148,11 @@ class Engine():
 
         # Alphazero style engines do not evaluate positions using cp scores,
         # probability of victory in range {-1, 1} is used instead.
-        # We can approximate a cp score, assuming a player would be
-        # clearly winning having an advantage of an extra queen.
-        # In Deepmind's Alphazero paper, a queen value of 9.5 is stated.
-        # Approximation will be made using that value rescaled to centipawns.
-        return int(self.__mcts.evaluation * 9.5 * 100)
+        # We can use a recalibrated formula developed for LeelaChessZero
+        # to approximate the cp score from the probability of victory:
+        # cp = 111.714640912 * tan(1.5620688421 * Q), where Q is the probability of victory.
+        # source: https://github.com/LeelaChessZero/lc0/pull/841
+        return int(111.714640912 * math.tan(1.5620688421 * self.__mcts.evaluation))
 
     def __perform_search(self) -> None:
         """
