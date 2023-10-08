@@ -64,10 +64,11 @@ class Node():
         # since a player cannot checkmate himself,
         # only the player who has just moved can be the winner
         # therefore, distinction who won is not necessary
-        # state never changes after initialization so there is no need to lock
         if self.__state.is_checkmate:
             return 1
-        return 0
+        if self.__state.is_terminal:
+            return 0
+        return None
 
     def clear_children(self) -> None:
         """Clear the children of the node"""
@@ -172,7 +173,7 @@ class MCTS():
         legal_moves = node.state.legal_moves
 
         # expand the node if it is not terminal
-        if not value:
+        if value is None:
             # use uniform policy if no model is provided
             if self.__model:
                 node_id = node.state.id
@@ -254,7 +255,6 @@ class MCTS():
         for child in self.__root.children:
             if child.action_taken == action:
                 self.set_root(child.state)
-                self.__release_write()
                 break
 
     def best_move(self) -> tuple:
