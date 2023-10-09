@@ -187,6 +187,7 @@ class MCTS():
             else:
                 # get uniform policy
                 legal_policy = self.__uniform_policy
+                value = 0
             node.expand(legal_policy, legal_moves, self.__nodes)
         node.backpropagate(value)
 
