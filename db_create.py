@@ -49,10 +49,8 @@ def process_game_by_io(conn, line):
         pgn = io.StringIO(line)
         game = chess.pgn.read_game(pgn)
 
-        db_accessed = False
         while True:
             # read the game and quit if file has ended
-            game = chess.pgn.read_game(pgn)
             if not game:
                 break
             game = game.next()  # skip starting position
@@ -73,10 +71,7 @@ def process_game_by_io(conn, line):
                 prob_eval = map_centipawns_to_probability(centipawns)
                 # insert or replace the position
                 insert_or_replace_position(conn, fen, centipawns, prob_eval)
-                db_accessed = True
                 game = game.next()
-        if db_accessed:
-            conn.commit()
     except Exception as e:
         print(e)
         print(line)
@@ -84,7 +79,7 @@ def process_game_by_io(conn, line):
 
 def shard_parser(shard_path) -> None:
     eval_games_count = 0
-    conn = sqlite3.connect('C:\sqlite_chess_db\chess_positions.db')
+    conn = sqlite3.connect('C:/sqlite_chess_db/chess_positions.db')
     pbar = tqdm.tqdm(leave=True)
     shard_name = os.path.basename(shard_path)
     with open(shard_path) as file:
@@ -98,12 +93,15 @@ def shard_parser(shard_path) -> None:
                     pbar.set_description(
                         "Processing shard " + shard_name + ". Eval games found: " + str(eval_games_count) + ".")
                 pbar.update(1)
+                if eval_games_count % 1000 == 0:
+                    conn.commit()
+        conn.commit()
+        conn.close()
 
 
 if __name__ == '__main__':
     timer_start = time.time()
-    conn = sqlite3.connect('C:\sqlite_chess_db\chess_positions.db')
-    shards_dir = "E:\chess_db"
+    shards_dir = "C:/Users/janic/Documents"
     shards = os.listdir(shards_dir)
     paths = []
     for file_name in shards:
@@ -111,15 +109,13 @@ if __name__ == '__main__':
             continue
         folder_path = os.path.join(shards_dir, file_name)
         paths.append(folder_path)
-    # for path in dirs:
-    #     process_shards_in_path(path)
+    # for path in paths:
+    #     shard_parser(path)
 
-    with Pool(5) as pool:
+    with Pool(4) as pool:
         pool.map(shard_parser, paths)
         pool.close()
         pool.join()
-    conn.commit()
-    conn.close()
 
     timer_end = time.time()
     # convert to minutes or hours if necessary
