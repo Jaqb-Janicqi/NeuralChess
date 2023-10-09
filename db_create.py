@@ -10,6 +10,7 @@ import time
 import io
 
 
+
 def get_centipawns(prob):
     return int(111.714640912 * math.tan(1.5620688421 * prob))
 
@@ -43,57 +44,62 @@ def insert_or_replace_position(conn, fen, cp, prob):
             END
     """, (fen, cp, prob))
 
+def get_position_count(conn):
+    return conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
+
+def safe_commit(conn):
+    for retry in range(10):
+        try:
+            conn.commit()
+            return
+        except sqlite3.OperationalError:
+            time.sleep(5)
+
 
 def process_game_by_io(conn, line):
     try:
         pgn = io.StringIO(line)
         game = chess.pgn.read_game(pgn)
-
+        if not game:
+            return
+        game = game.next()  # skip starting position
         while True:
-            # read the game and quit if file has ended
             if not game:
                 break
-            game = game.next()  # skip starting position
-            if not game:
-                break
-            while True:
-                if not game:
-                    break
-                if game.eval() is None:
-                    game = game.next()
-                    continue
-                # get the fen
-                fen = game.board().fen()
-                # get the evaluation
-                centipawns = game.eval()
-                centipawns = centipawns.relative.score(mate_score=12800)
-                # get the probability from the evaluation
-                prob_eval = map_centipawns_to_probability(centipawns)
-                # insert or replace the position
-                insert_or_replace_position(conn, fen, centipawns, prob_eval)
+            if game.eval() is None:
                 game = game.next()
+                continue
+            # get the fen
+            fen = game.board().fen()
+            # get the evaluation
+            centipawns = game.eval()
+            centipawns = centipawns.relative.score(mate_score=12800)
+            # get the probability from the evaluation
+            prob_eval = map_centipawns_to_probability(centipawns)
+            # insert or replace the position
+            insert_or_replace_position(conn, fen, centipawns, prob_eval)
+            game = game.next()
     except Exception as e:
         print(e)
         print(line)
 
 
 def shard_parser(shard_path) -> None:
-    eval_games_count = 0
     conn = sqlite3.connect('C:/sqlite_chess_db/chess_positions.db')
-    pbar = tqdm.tqdm(leave=True)
     shard_name = os.path.basename(shard_path)
+    pbar = tqdm.tqdm(total=100000000,
+                        desc="Processing shard " + shard_name + ".")
+    eval_games_count = 0
     with open(shard_path) as file:
         # select until "1." is found
         for line in file:
+            pbar.update(1)
             if line.startswith("1."):
                 # check if the position has an eval
                 if '[%eval' in line:
                     process_game_by_io(conn, line)
                     eval_games_count += 1
-                    pbar.set_description(
-                        "Processing shard " + shard_name + ". Eval games found: " + str(eval_games_count) + ".")
-                pbar.update(1)
-                if eval_games_count % 1000 == 0:
+                if eval_games_count % 500 == 0:
                     conn.commit()
         conn.commit()
         conn.close()
@@ -101,21 +107,23 @@ def shard_parser(shard_path) -> None:
 
 if __name__ == '__main__':
     timer_start = time.time()
-    shards_dir = "C:/Users/janic/Documents"
+    # shards_dir = "C:/Users/janic/Documents"
+    shards_dir = "C:/Users/janic/Downloads"
     shards = os.listdir(shards_dir)
     paths = []
     for file_name in shards:
-        if ".pgn" not in file_name:
+        file_name_base, file_extension = os.path.splitext(file_name)
+        if file_extension != ".pgn":
             continue
         folder_path = os.path.join(shards_dir, file_name)
         paths.append(folder_path)
-    # for path in paths:
-    #     shard_parser(path)
+    for path in paths:
+        shard_parser(path)
 
-    with Pool(4) as pool:
-        pool.map(shard_parser, paths)
-        pool.close()
-        pool.join()
+    # with Pool(4) as pool:
+    #     pool.map(shard_parser, args)
+    #     pool.close()
+    #     pool.join()
 
     timer_end = time.time()
     # convert to minutes or hours if necessary
