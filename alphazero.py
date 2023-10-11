@@ -229,8 +229,6 @@ class AlphaZero():
         return train_idx, test_idx
 
     def pre_train_value(self):
-        # self.__model.load_state_dict(torch.load("C:/Users/janic/Desktop/04676_06569.pt"))
-
         # connect to database and get its size
         conn = sqlite3.connect(self.__training_args['db_path'])
         if self.__training_args['db_size'] is None:
@@ -248,7 +246,6 @@ class AlphaZero():
             num_requests, db_request_size)
         best_model_num = None
         best_model_loss = np.inf
-        # self.save_loss_plot(np.arange(100), 0, "train")
 
         # pre-train the value head
         num_epochs = self.__training_args['num_epochs_pre']
@@ -332,13 +329,11 @@ class AlphaZero():
             avg_model_test_loss /= len(test_idx_list)
             tqdm.tqdm.write(
                 f"Epoch {epoch} - Train Loss: {avg_model_train_loss} - Test Loss: {avg_model_test_loss}")
-            # print(
-            #     f"Epoch {epoch} - Train Loss: {train_loss} - Test Loss: {test_loss}")
 
             # save the best model
             if avg_model_test_loss < best_model_loss:
                 best_model_loss = avg_model_test_loss
-                model_name = f"pre_training/model_{epoch}_"
+                model_name = f"model_{epoch}_"
                 model_name += f"{avg_model_test_loss}"
                 # replace "." with "_" to avoid problems with file names
                 model_name = model_name.replace(".", "_")
