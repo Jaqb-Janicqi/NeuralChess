@@ -20,8 +20,18 @@ model_path: model.pt
 # It is not recommended to go below 128Mb for normal matches, and below 512Mb for analysis.
 # Increasing this value further should not be required under normal circumstances.
 # default: 512
-cache_size: 512
+cache_size: 4096
 
 # allow the engine to utilize multiple threads for faster search
 # default: True
 multi_threaded: True
+
+# model parameters # do not change unless you have your own model to load
+# num_blocks: number of residual blocks
+# default: 19
+num_blocks: 19
+# num_features: number of channels in each convolutional layer
+# default: 240
+num_features: 240
+
+input_features: 16

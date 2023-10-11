@@ -1,0 +1,34 @@
+# pre train
+c_puct_pre: 0 # 0
+num_searches_scaling: 2 # 2
+db_path: 'C:/sqlite_chess_db/chess_positions.db'
+db_size: 45912542
+num_epochs_pre: 100 # 10
+max_batches_per_epoch: 750
+
+# training
+num_searches: 2000 #2000
+c_puct: 1 # 1
+model_path: model.pt # model.pt
+cache_size: 4096 # 4096
+batch_size: 256 # 256 # number of games per batch
+db_request_size: 2048 # 2048 # number of games per request
+multi_threaded: True # True
+num_games: 400 # 400
+num_epochs: 10 # 10
+training_split: 0.9 # 0.9
+# optimizer
+lr: 0.02
+target_lr: 0.000001
+lr_decay_step: 0.0005
+lr_decay_start_epoch: 5
+weight_decay: 0.000001
+momentum: 0.1
+random_lr: True
+random_lr_start: 70
+
+# saturation
+lr_scaling: 0.1 # 0.1
+num_epochs_saturation: 10 # 10
+patience: 5 # 5
+pit_temp: 1 # 1
