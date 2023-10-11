@@ -5,8 +5,8 @@ import torch.nn as nn
 class ResBlock(nn.Module):
     def __init__(self, num_features):
         super().__init__()
-        self.conv1 = nn.Conv2d(num_features, num_features, 3, 1, 0)
-        self.conv2 = nn.Conv2d(num_features, num_features, 3, 1, 0)
+        self.conv1 = nn.Conv2d(num_features, num_features, 3, 1, 1)
+        self.conv2 = nn.Conv2d(num_features, num_features, 3, 1, 1)
         self.bnorm1 = nn.BatchNorm2d(num_features)
         self.bnorm2 = nn.BatchNorm2d(num_features)
         self.relu = nn.ReLU()
@@ -24,11 +24,11 @@ class ResBlock(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, num_blocks, num_features, policy_size, device="cpu") -> None:
+    def __init__(self, num_blocks, num_features, input_features, policy_size, device="cpu") -> None:
         super().__init__()
         self.device = device
         self.start_block = nn.Sequential(
-            nn.Conv2d(1, num_features, 3),
+            nn.Conv2d(input_features, num_features, 3, padding=1),
             nn.BatchNorm2d(num_features),
             nn.ReLU()
         )
@@ -41,16 +41,16 @@ class ResNet(nn.Module):
             nn.BatchNorm2d(num_features),
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(num_features*policy_size, policy_size)
+            nn.Linear(15360, policy_size)
         )
         self.value = nn.Sequential(
-            nn.Conv2d(num_features, 1, 1),
-            nn.BatchNorm2d(1),
+            nn.Conv2d(num_features, num_features, 1),
+            nn.BatchNorm2d(num_features),
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(num_features*policy_size, num_features*policy_size),
+            nn.Linear(15360, num_features),
             nn.ReLU(),
-            nn.Linear(num_features*policy_size, 1),
+            nn.Linear(num_features, 1),
             nn.Tanh()
         )
         self.to(device)
@@ -64,7 +64,10 @@ class ResNet(nn.Module):
         return p, v
 
     def get_tensor_state(self, state):
-        return torch.tensor(state).unsqueeze(0).unsqueeze(0).float().to(self.device)
+        return torch.tensor(state)
+    
+    def to_self(self, data):
+        return data.to(self.device).float()
 
     def get_policy(self, p):
         return torch.softmax(p, 1).squeeze(0).detach().cpu().numpy()
