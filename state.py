@@ -5,7 +5,7 @@ import numpy as np
 def bb_to_matrix(bb: np.uint64) -> np.ndarray:
     """Converts a bitboard to a 8x8 matrix."""
 
-    return np.unpackbits(np.frombuffer(bb.tobytes(), dtype=np.uint8)).astype(np.float16).reshape(8, 8)
+    return np.unpackbits(np.frombuffer(bb.tobytes(), dtype=np.uint8)).astype(np.float32).reshape(8, 8)
 
 
 class State():
@@ -77,11 +77,11 @@ class State():
         board = self.__board if self.__board.turn else self.__board.mirror()
         # get board attributes
         castling_bb = np.uint64(board.castling_rights)
-        fullmove_bb = self.__board.fullmove_number
-        halfmove_bb = self.__board.halfmove_clock
         ep_square_bb = self.__board.ep_square
         if not ep_square_bb:
             ep_square_bb = 0
+        fullmove = self.__board.fullmove_number
+        halfmove = self.__board.halfmove_clock
         # get pieces
         piece_bbs = [
             self.__board.kings,
@@ -103,9 +103,9 @@ class State():
         # convert castling
         matrices.append(bb_to_matrix(np.uint64(castling_bb)))
         # create fullmove matrix
-        fullmove_matrix = np.full((8, 8), fullmove_bb, dtype=np.float16)
+        fullmove_matrix = np.full((8, 8), fullmove, dtype=np.float32)
         matrices.append(fullmove_matrix)
         # create halfmove matrix
-        halfmove_matrix = np.full((8, 8), halfmove_bb, dtype=np.float16)
+        halfmove_matrix = np.full((8, 8), halfmove, dtype=np.float32)
         matrices.append(halfmove_matrix)
         return np.array(matrices)
