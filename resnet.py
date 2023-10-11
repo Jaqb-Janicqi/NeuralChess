@@ -66,6 +66,9 @@ class ResNet(nn.Module):
     def get_tensor_state(self, state):
         return torch.tensor(state)
     
+    def get_unbatched_tensor_state(self, state):
+        return torch.tensor(state).unsqueeze(0).to(self.device).float()
+    
     def to_self(self, data):
         return data.to(self.device).float()
 

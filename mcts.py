@@ -80,6 +80,11 @@ class Node():
 
         self.__children.remove(child)
 
+    def clear_parent(self) -> None:
+        """Clear the parent of the node"""
+
+        self.__parent = None
+
     def ucb(self, parent: "Node") -> float:
         """Calculate the UCB value of the node"""
 
@@ -141,13 +146,13 @@ class MCTS():
         """Calculate the policy and value of a given node"""
 
         policy, policy_value = self.__model(
-            self.__model.get_tensor_state(node.state.encoded))
+            self.__model.get_unbatched_tensor_state(node.state.encoded))
         policy = self.__model.get_policy(policy)
         policy_value = self.__model.get_value(policy_value)
 
         # calculate legal policy
         legal_ids = np.array(
-            [self.__action_space.get_key(move) for move in legal_moves])
+            [self.__action_space.get_key(move.uci()) for move in legal_moves])
         legal_policy = np.zeros(self.__action_space.size)
         legal_policy[legal_ids] = policy[legal_ids]
         legal_policy = legal_policy[legal_policy != 0]
@@ -167,8 +172,6 @@ class MCTS():
                 depth_reached = depth
                 break
             node = node.select()
-        if self.__depth_reached < depth_reached:
-            self.__depth_reached = depth_reached
         value = node.simulate()
         legal_moves = node.state.legal_moves
 
@@ -178,12 +181,13 @@ class MCTS():
             if self.__model:
                 node_id = node.state.id
                 # check cache for policy, skip calculation if found
-                legal_policy = self.__cache[node_id]
-                if legal_policy is None:
+                if node_id in self.__cache:
+                    legal_policy, value = self.__cache[node_id]
+                else:
                     legal_policy, value = self.calculate_policy(
                         node, legal_moves)
-                    # add policy cache
-                    self.__cache[node_id] = legal_policy
+                    # add policy and value to cache
+                    self.__cache[node_id] = (legal_policy, value)
             else:
                 # get uniform policy
                 legal_policy = self.__uniform_policy
@@ -201,7 +205,7 @@ class MCTS():
         dist = np.zeros(self.__action_space.size)
         for child in self.__root.children:
             dist[self.__action_space.get_key(
-                child.action_taken)] = child.visit_count
+                child.action_taken.uci())] = child.visit_count
         return dist / np.sum(dist)
 
     def initialize_root(self, reinitialize=False) -> None:
@@ -227,6 +231,7 @@ class MCTS():
 
         if state.id in self.__nodes:
             self.__root = self.__nodes[state.id]
+            self.__root.clear_parent()
         else:
             self.__root = Node(args=self.__args, parent=None, state=state)
             self.__nodes[state.id] = self.__root
