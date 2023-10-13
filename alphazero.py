@@ -38,13 +38,14 @@ class AlphaZero():
             self.__action_space.size,
             device
         )
-        # self.__optimizer = torch.optim.ASGD(
-        #     self.__model.parameters(),
-        #     lr=self.__training_args['lr']
-        # )
-        self.__optimizer = AdaBound(
-            self.__model.parameters()
+        self.__optimizer = torch.optim.ASGD(
+            self.__model.parameters(),
+            lr=self.__training_args['lr']
         )
+        # self.__optimizer = AdaBound(
+        #     self.__model.parameters(),
+        #     amsbound=True,
+        # )
         self.__model_num = 1
         self.__value_loss_fn = nn.MSELoss()
         self.__policy_loss_fn = nn.CrossEntropyLoss()
@@ -320,37 +321,38 @@ class AlphaZero():
                         avg_model_test_loss / (batch_num + 1))
                     pbar.update(1)
             avg_model_train_loss /= train_batches_num
-            avg_model_test_loss /= len(test_idx_list)
+            avg_model_test_loss /= train_batches_num
             tqdm.tqdm.write(
                 f"Epoch {epoch} - Train Loss: {avg_model_train_loss} - Test Loss: {avg_model_test_loss}")
 
             # save the best model
-            if avg_model_test_loss < best_model_loss:
-                best_model_loss = avg_model_test_loss
-                model_name = f"model_{epoch}_"
-                model_name += f"{avg_model_test_loss}"
-                # replace "." with "_" to avoid problems with file names
-                model_name = model_name.replace(".", "_")
+            # if avg_model_test_loss < best_model_loss:
+            #     best_model_loss = avg_model_test_loss
+            model_name = f"model_{epoch}"
+            model_name += f"_train_{avg_model_test_loss}"
+            model_name += f"_test_{avg_model_test_loss}"
+            # replace "." with "_" to avoid problems with file names
+            model_name = model_name.replace(".", "_")
                 # save the model
-                torch.save(self.__model.state_dict(),
-                           f"pre_training/{model_name}.pt")
-                # save optimizer
-                torch.save(self.__optimizer.state_dict(),
-                           f"pre_training/optimizer_{epoch}.pt")
+            torch.save(self.__model.state_dict(),
+                        f"pre_training/{model_name}.pt")
+            # save optimizer
+            torch.save(self.__optimizer.state_dict(),
+                        f"pre_training/optimizer_{epoch}.pt")
 
             # save the loss plot
             self.save_loss_plot(train_loss_history[epoch], epoch, "train")
             self.save_loss_plot(test_loss_history[epoch], epoch, "test")
 
             # decay the learning rate max_lr
-            # if epoch >= self.__training_args['lr_decay_start_epoch']:
-            #     lr_upper = self.__training_args['lr'] - \
-            #         self.__training_args['lr_decay_step']
-            #     lr_lower = self.__training_args['target_lr']
-            #     if lr_upper < lr_lower:
-            #         lr_upper = lr_lower
-            #     self.__optimizer.param_groups[0]['lr'] = lr_upper
-                # tqdm.tqdm.write(f"Lr bounds: {lr_lower} - {lr_upper}")
+            if epoch >= self.__training_args['lr_decay_start_epoch']:
+                lr_upper = self.__training_args['lr'] - \
+                    self.__training_args['lr_decay_step']
+                lr_lower = self.__training_args['target_lr']
+                if lr_upper < lr_lower:
+                    lr_upper = lr_lower
+                self.__optimizer.param_groups[0]['lr'] = lr_upper
+                tqdm.tqdm.write(f"Lr bounds: {lr_lower} - {lr_upper}")
         conn.close()
 
     def test_value_loss(self) -> None:
@@ -369,20 +371,21 @@ class AlphaZero():
         idx = np.concatenate((idx1, idx2))
 
         models = os.listdir("pre_training")
-        models = [model for model in models if model.endswith(".pt")]
+        models = [model for model in models if model.endswith(".pt") and model.startswith("model")]
 
         for model in models:
             self.__model.load_state_dict(torch.load(f"pre_training/{model}"))
             self.__model.eval()
             avg_model_test_loss = 0
 
-            pbar = tqdm.tqdm(total=idx)
+            pbar = tqdm.tqdm(total=len(idx2),
+                             desc="Model " + str(model) + ". Testing.")
             self.__model.train()
             test_loss = 0
             pbar.reset()
             self.__model.eval()
             with torch.no_grad():
-                for batch_num, test_idx in enumerate(idx):
+                for batch_num, test_idx in enumerate(idx2):
                     # get batch from the list
                     batch = self.get_pre_train_batch(
                         conn, batch_size, test_idx)
@@ -399,7 +402,9 @@ class AlphaZero():
                     test_loss /= num_batches
                     avg_model_test_loss += test_loss
                     pbar.update(1)
-            avg_model_test_loss /= len(idx)
+            avg_model_test_loss /= len(idx2)
+            tqdm.tqdm.write(
+                f"Model {model} - Test Loss: {avg_model_test_loss}")
 
     def load_best_model(self):
         models = os.listdir("pre_training")
@@ -407,18 +412,28 @@ class AlphaZero():
         best_model = None
         best_model_loss = np.inf
         for model in models:
-            loss = float(model.split("_")[-1].replace("_", "."))
+            if not model.startswith("model"):
+                continue
+            loss = model.split("_")[-1].replace("_", ".")
+            # remove ".pt" from the end and convert to float
+            loss = "0." + loss[:-3]
+            loss = float(loss)
             if loss < best_model_loss:
                 best_model_loss = loss
                 best_model = model
+        best_model_num = int(best_model.split("_")[1])
         self.__model.load_state_dict(torch.load(
-            f"pre_training/{best_model}")).to(self.__model.device)
+            f"pre_training/{best_model}"))
+        self.__model = self.__model.to(self.__model.device)
+        # self.__optimizer.load_state_dict(torch.load(
+        #     f"pre_training/optimizer_{best_model_num}.pt"))
 
 
 if __name__ == "__main__":
     dml = torch_directml.device()
     az = AlphaZero(device=dml)
     # az.load_best_model()
-    az.pre_train_value()
+    az.test_value_loss()
+    # az.pre_train_value()
     # az.pre_train()
     # az.train()
