@@ -123,3 +123,12 @@ class Cache:
                 return False
             self.__size -= sys.getsizeof((key, value))
             return True
+
+    def set_max_size(self, max_size: int) -> None:
+        """Set the max size of the cache in MB"""
+
+        with self.__write():
+            self.__max_size = max_size * 1024 * 1024
+            while self.__size > self.__max_size:
+                if not self.__evict():
+                    return
