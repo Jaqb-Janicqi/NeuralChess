@@ -357,11 +357,12 @@ class AlphaZero():
 
     def test_value_loss(self) -> None:
         conn = sqlite3.connect(self.__training_args['db_path'])
-        if self.__training_args['db_size'] is None:
+        db_size = 0
+        try:
+            db_size = self.__training_args['db_size']
+        except:
             db_size = conn.execute(
                 "SELECT COUNT(*) FROM positions").fetchone()[0]
-        else:
-            db_size = self.__training_args['db_size']
         batch_size = self.__training_args['batch_size']
         db_request_size = self.__training_args['db_request_size']
         num_requests = db_size // db_request_size
@@ -369,6 +370,7 @@ class AlphaZero():
         max_batches = self.__training_args['max_batches_per_epoch']
         idx1, idx2 = self.get_train_test_idx(num_requests, db_request_size)
         idx = np.concatenate((idx1, idx2))
+        idx2 = idx
 
         models = os.listdir("pre_training")
         models = [model for model in models if model.endswith(".pt") and model.startswith("model")]
@@ -386,6 +388,8 @@ class AlphaZero():
             self.__model.eval()
             with torch.no_grad():
                 for batch_num, test_idx in enumerate(idx2):
+                    if batch_num >= self.__training_args["max_batches_per_epoch"]:
+                        break
                     # get batch from the list
                     batch = self.get_pre_train_batch(
                         conn, batch_size, test_idx)
@@ -431,7 +435,8 @@ class AlphaZero():
 
 if __name__ == "__main__":
     dml = torch_directml.device()
-    az = AlphaZero(device=dml)
+    # az = AlphaZero(device=dml)
+    az = AlphaZero()
     # az.load_best_model()
     az.test_value_loss()
     # az.pre_train_value()
