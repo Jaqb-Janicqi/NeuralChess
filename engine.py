@@ -6,12 +6,14 @@ from time import perf_counter, sleep
 
 import chess
 import torch
+import torch_directml
 import yaml
 
 from actionspace import ActionSpace
 from cache_read_priority import Cache
 from mcts import MCTS
 from resnet import ResNet
+import cProfile
 
 
 class Engine():
@@ -21,10 +23,6 @@ class Engine():
         self.__info = {
             "name": "RoboHub",
             "author": "Jakub Janicki"
-        }
-        self.__model_params = {
-            "num_blocks": 19,
-            "num_channels": 256
         }
         self.__debug = False
         self.__infinity = sys.maxsize ** 10
@@ -67,17 +65,21 @@ class Engine():
         if os.path.exists(self.__args["model_path"]):
             # load the model from the specified path
             self.__model = ResNet(
-                self.__model_params['num_blocks'],
-                self.__model_params['num_channels'],
-                self.__action_space.size, self.__device)
+                self.__args['num_blocks'],
+                self.__args['num_features'],
+                self.__args['input_features'],
+                self.__action_space.size,
+                self.__device
+            )
             try:
                 self.__model.load_state_dict(torch.load(
-                    self.__args["model_path"], map_location=self.__device))
+                    self.__args["model_path"]))
+                # self.__model = self.__model.to(self.__model.device)
                 self.__model.eval()
             except FileNotFoundError:
                 self.__model = None
                 print("Model corrupted or has wrong structure")
-        self.__mcts = MCTS(self.__args, self.__action_space,
+        self.__mcts = MCTS(self.__args["c_puct"], self.__action_space,
                            Cache(self.__args["cache_size"]), self.__model)
 
         self.__default_go_args = {
@@ -114,6 +116,7 @@ class Engine():
         except (KeyboardInterrupt, EOFError):
             # exit the engine
             self.__search_interrupt.set()
+            self.__input_interrupt.set()
             raise SystemExit
 
     def __wait(self):
@@ -135,9 +138,9 @@ class Engine():
             # return the time to search
             return self.__go_args["movetime"]
         # get the time left for the current player
-        time_left = self.__go_args["wtime"] if self.__mcts.root.state.turn else self.__go_args["btime"]
+        time_left = self.__go_args["wtime"] if self.__mcts.root.turn else self.__go_args["btime"]
         # get the increment for the current player
-        increment = self.__go_args["winc"] if self.__mcts.root.state.turn else self.__go_args["binc"]
+        increment = self.__go_args["winc"] if self.__mcts.root.turn else self.__go_args["binc"]
         # return the time to search
         if time_left <= 0:
             return 0
@@ -200,7 +203,7 @@ class Engine():
         ponder_thread.join()
         if input_str == "ponderhit":
             # ponderhit received, continue pondering
-            self.__mcts.select_child_as_new_root(move)
+            self.__mcts.select_child_as_root(move)
         else:
             fen = "".join(input_str.split(maxsplit=1)[1:])
             self.__mcts.root_from_fen(fen)
@@ -269,16 +272,16 @@ class Engine():
         # end the search and update time in go_args
         self.__print_search_info(search_end)
         search_time = (search_end - self.__search_start_time) * 1000
-        player = self.__mcts.root.state.turn
+        player = self.__mcts.root.turn
         if player:
             self.__go_args["wtime"] -= search_time
         else:
             self.__go_args["btime"] -= search_time
 
         if pondermove is None:
-            print("bestmove", bestmove)
+            print("bestmove", bestmove.uci())
         else:
-            print("bestmove", bestmove, "ponder", pondermove)
+            print("bestmove", bestmove.uci(), "ponder", pondermove.uci())
 
         # reset engine search stats
         self.__nodes_searched = 0
@@ -342,14 +345,26 @@ class Engine():
             fen[0] = chess.STARTING_FEN
         elif fen == "startpos":
             fen = chess.STARTING_FEN
+        else:
+            try:
+                board = chess.Board(fen)
+            except:
+                print("info Invalid fen string")
+                return
 
         # if the mcts has a root node, that means the engine is in the middle of the game,
         # so we should select a child node as the new root, using the opponent's move
         if self.__mcts.root:
             opponent_move = fen[-1]
-            self.__mcts.select_child_as_new_root(opponent_move)
+            self.__mcts.select_child_as_root(opponent_move)
         else:
             self.__mcts.root_from_fen(fen)
+
+    def __push(self, move: str) -> None:
+        """Push a move to the root node"""
+
+        self.__mcts.select_child_as_root(chess.Move.from_uci(move))
+        print(self.__mcts.root.fen)
 
     def __uci(self) -> None:
         """Handle uci command"""
@@ -385,6 +400,9 @@ class Engine():
             elif command.startswith("go"):
                 self.__uci_go(command)
 
+            elif command.startswith("push"):
+                self.__push(command.split()[1])
+
     def __read_init(self) -> None:
         """Read the init command"""
 
@@ -395,4 +413,6 @@ class Engine():
 
 
 if __name__ == "__main__":
-    engine = Engine()
+    # dml = torch_directml.device()
+    dml = "cpu"
+    engine = Engine(dml)
