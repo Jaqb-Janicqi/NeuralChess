@@ -74,7 +74,7 @@ class ActionSpace():
     def __load(self) -> None:
         with open("actionspace.txt", "r") as f:
             for line in f:
-                self.add(line.strip())
+                self.add(chess.Move.from_uci(line.strip()))
 
     @property
     def size(self) -> int:
