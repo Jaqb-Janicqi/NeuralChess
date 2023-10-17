@@ -26,7 +26,7 @@ class bit_array():
 
 class db_dataloader(mp.Process):
     def __init__(self, db_path, table_name, num_batches, batch_size,  min_index,
-                 max_index, random=True, replace=True, shuffle=True, slice_size=32) -> None:
+                 max_index, random=True, replace=True, shuffle=True, slice_size=None) -> None:
         super().__init__()
         self.__db_path = db_path
         self.__table_name = table_name
@@ -37,6 +37,13 @@ class db_dataloader(mp.Process):
         self.__shuffle = shuffle
         self.__min_index = min_index
         self.__max_index = max_index
+        if slice_size is None:
+            if slice_size >= batch_size:
+                slice_size = batch_size
+            if batch_size % 64 == 0:
+                slice_size = batch_size // 64
+            else:
+                slice_size = batch_size // 50
         self.__slice_size = slice_size
         self.__batch_buffer = mp.Queue(maxsize=2)
         self.batches_left = mp.Value('i', num_batches)
