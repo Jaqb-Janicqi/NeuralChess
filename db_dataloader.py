@@ -63,7 +63,6 @@ class db_dataloader(mp.Process):
     def run(self):
         for i in range(self.__num_batches):
             self.__create_batch()
-            print(f"created batch {i}")
 
     @property
     def __random_idx(self):
