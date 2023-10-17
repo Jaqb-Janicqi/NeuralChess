@@ -44,6 +44,8 @@ class db_dataloader(mp.Process):
                 slice_size = batch_size // 64
             else:
                 slice_size = batch_size // 50
+            if slice_size == 0:
+                slice_size = 1
         self.__slice_size = slice_size
         self.__batch_buffer = mp.Queue(maxsize=2)
         self.batches_left = mp.Value('i', num_batches)
