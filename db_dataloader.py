@@ -10,6 +10,10 @@ class bit_array():
         self.__size = size
         self.__bit_array = np.zeros(
             np.ceil(size/64).astype(np.uint64), dtype=np.uint64)
+        
+    def reset(self):
+        self.__bit_array = np.zeros(
+            np.ceil(self.__size/64).astype(np.uint64), dtype=np.uint64)
 
     def __getitem__(self, index: int) -> bool:
         if index >= self.__size:
@@ -53,6 +57,7 @@ class dataloader(mp.Process):
         self.__num_query_cols = None
         self.__calculate_batch_and_slice_size()
         self.__get_table_structure()
+        self.__reset_switch = mp.Event()
 
     def __get_table_structure(self):
         conn = sqlite3.connect(self.__db_path)
@@ -148,11 +153,24 @@ class dataloader(mp.Process):
             out_batch = [np.asarray(col)[0] for col in out_batch]
         self.__batch_buffer.put(out_batch)
 
+    def reset(self):
+        self.__reset_switch.set()
+
+    def __reset_self(self):
+        self.__last_idx = self.__min_index
+        self.batches_left.value = self.__num_batches
+        while self.__batch_buffer.qsize() > 0:
+            self.__batch_buffer.get()
+
     def run(self):
-        if self.__num_batches == 0:
-            self.__num_batches = sys.maxsize ** 10
-        for _ in range(self.__num_batches):
-            self.__create_batch()
+        while True:
+            if self.__num_batches == 0:
+                self.__num_batches = sys.maxsize ** 10
+            for _ in range(self.__num_batches):
+                self.__create_batch()
+            self.__reset_switch.wait()
+            self.__reset_switch.clear()
+            self.__reset_self()
 
     def __random_idx(self):
         return random.randint(self.__min_index, self.__max_index // self.__slice_size)
