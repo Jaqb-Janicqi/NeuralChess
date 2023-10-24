@@ -1,3 +1,4 @@
+import os
 import sys
 import numpy as np
 import torch
@@ -5,7 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_directml as dml
 from tqdm import tqdm
-
+from scipy.signal import savgol_filter
+import pickle
 
 class TrainingModule:
     def __init__(self, model, device=dml.device()):
@@ -59,7 +61,8 @@ class TrainingModule:
                 loss = self.training_step(batch)
                 self._optimizers['optimizer'].zero_grad()
                 loss.backward()
-                map(lambda obj: obj.step(), self._step_list)
+                for func in self._step_list:
+                    func.step()
 
             if val_loader is None:
                 self.log('avg_loss',
@@ -107,47 +110,68 @@ class TrainingModule:
     def steps_per_epoch(self):
         return len(self._dataloaders['train_loader'])
 
-    def lr_finder(self, train_loader, start_lr, end_lr, exp_step_size, ma_window=100):
+    def lr_finder(self, train_loader, start_lr, end_lr, exp_step_size, smoothing_window=50):
         self._dataloaders['train_loader'] = train_loader
         self.configure_optimizers()
         lr = start_lr
         pbar = tqdm(desc=f'max_lr: {end_lr}', dynamic_ncols=True)
         while lr <= end_lr:
-            for batch in train_loader:
-                self._optimizers['optimizer'].param_groups[0]['lr'] = lr
-                pbar.set_postfix({'current lr:': lr})
-                loss = self.training_step(batch)
-                self._optimizers['optimizer'].zero_grad()
-                loss.backward()
+            try:
+                for batch in train_loader:
+                    self._optimizers['optimizer'].param_groups[0]['lr'] = lr
+                    pbar.set_postfix({'current lr:': self._optimizers['optimizer'].param_groups[0]['lr']})
+                    loss = self.training_step(batch)
+                    self._optimizers['optimizer'].zero_grad()
+                    loss.backward()
 
-                map(lambda obj: obj.step(), self._step_list)
-                self.log('loss', loss.cpu().item())
-                self.log('lr', lr)
-                if lr > end_lr:
-                    break
-                lr *= 10 ** exp_step_size
-                pbar.update(1)
-            self.on_epoch_end(self._log_dict)
+                    self._optimizers['optimizer'].step()
+                    self.log('loss', loss.cpu().item())
+                    self.log('lr', lr)
+                    if lr > end_lr:
+                        break
+                    lr *= 10 ** exp_step_size
+                    pbar.update(1)
+                self.on_epoch_end(self._log_dict)
+            except Exception as e:
+                print(e)
+                break
         pbar.close()
 
         # plot lr vs loss
         import matplotlib.pyplot as plt
-        plt.plot(self._log_dict['lr'], self._log_dict['loss'])
-        plt.savefig('lr_finder.png')
-        plt.close()
 
-        # compute moving average of loss
-        avg_loss = []
-        for i in range(len(self._log_dict['loss']) - ma_window):
-            avg_loss.append(
-                sum(self._log_dict['loss'][i:i + ma_window]) / ma_window)
-        # make lr and loss same length
-        self._log_dict['lr'] = self._log_dict['lr'][ma_window:]
+        # check directory for files and append a number if it exists
+        file_num = 0
+        if os.path.exists('lr_finder.png'):
+            while os.path.exists(f'lr_finder{file_num}.png'):
+                file_num += 1
 
-        # plot lr vs avg_loss
-        plt.plot(self._log_dict['lr'], avg_loss)
-        plt.savefig('lr_finder_avg.png')
-        plt.close()
+        lr = np.array(self._log_dict['lr'])
+        loss = np.array(self._log_dict['loss'])
+        fig, ax = plt.subplots()
+        ax.plot(lr, loss)
+        ax.set_xscale('log')
+        ax.set_xlabel('Learning Rate')
+        ax.set_ylabel('Loss')
+        ax.set_title('Learning Rate Finder')
+        pickle.dump(fig, open(f'lr_finder_{file_num}.pickle', 'wb'))
+        fig.savefig(f'lr_finder_{file_num}.png')
+
+        # compute savgol filter
+        if smoothing_window % 2 == 0:
+            smoothing_window += 1
+
+        loss = savgol_filter(loss, smoothing_window, 3, mode='nearest')
+        fig, ax = plt.subplots()
+        ax.plot(lr, loss)
+        ax.set_xscale('log')
+        ax.set_xlabel('Learning Rate')
+        ax.set_ylabel('Loss')
+        ax.set_title('Learning Rate Finder')
+        pickle.dump(fig, open(f'lr_finder_smooth_{file_num}.pickle', 'wb'))
+        fig.savefig(f'lr_finder_smooth_{file_num}.png')
+        plt.show()
+
 
     def on_epoch_end(self, log_dict):
         pass
