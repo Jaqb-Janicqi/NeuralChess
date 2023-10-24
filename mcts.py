@@ -1,11 +1,10 @@
 import numpy as np
-import random
 import chess
+import torch
 from actionspace import ActionSpace as asp
 from mcts_node import Node
 from cache_read_priority import Cache
 from resnet import ResNet
-import torch
 
 
 class MCTS():
