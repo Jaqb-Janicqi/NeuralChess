@@ -52,10 +52,10 @@ class AlphaZero():
         dataloader = DataLoader(
             db_path='C:/sqlite_chess_db/chess_positions.db',
             table_name='positions',
-            num_batches=0,
+            num_batches=10000,
             batch_size=1024,
             min_index=1,
-            max_index=db_size*0.9,
+            max_index=db_size*0.5,
             random=True,
             replace=False,
             shuffle=True,
@@ -66,13 +66,13 @@ class AlphaZero():
         val_dataloader = DataLoader(
             db_path='C:/sqlite_chess_db/chess_positions.db',
             table_name='positions',
-            num_batches=0,
+            num_batches=1000,
             batch_size=1024,
-            min_index=db_size*0.9,
+            min_index=db_size*0.7,
             max_index=db_size,
-            random=True,
+            random=False,
             replace=False,
-            shuffle=True,
+            shuffle=False,
             slice_size=64,
             specials={'encoded': convert_to_numpy}
         )
@@ -85,67 +85,7 @@ class AlphaZero():
         )
         model.to(self.__device)
         trainer = NetworkTrainer(model, True, self.__device)
-        trainer.fit(dataloader, val_dataloader, 100, True)
-
-    def find_lr_old(self):
-        conn = sqlite3.connect(self.__training_args['db_path'])
-        db_size = conn.execute(
-            "SELECT COUNT(*) FROM positions").fetchone()[0]
-        conn.close()
-        tmp = DataLoader(
-            db_path='C:/sqlite_chess_db/chess_positions.db',
-            table_name='positions',
-            num_batches=0,
-            batch_size=1024,
-            min_index=db_size*0.1,
-            max_index=db_size*0.2,
-            random=True,
-            replace=True,
-            shuffle=True,
-            slice_size=64,
-            specials={'encoded': convert_to_numpy},
-            data_cols=['encoded'],
-            label_cols=['prob']
-        )
-        tmp.start()
-        tmp = TrainDataLoaderIter(tmp)
-        # tmp_val = DataLoader(
-        #     db_path='C:/sqlite_chess_db/chess_positions.db',
-        #     table_name='positions',
-        #     num_batches=0,
-        #     batch_size=1024,
-        #     min_index=db_size*0.21,
-        #     max_index=db_size*0.25,
-        #     random=True,
-        #     replace=True,
-        #     shuffle=True,
-        #     slice_size=64,
-        #     specials={'encoded': convert_to_numpy},
-        #     data_cols=['encoded'],
-        #     label_cols=['prob']
-        # )
-        # tmp_val.start()
-        # tmp_val = ValDataLoaderIter(tmp_val)
-        model = ResNet(
-            self.__args['num_blocks'],
-            self.__args['num_features'],
-            self.__args['input_features'],
-            self.__action_space.size
-        )
-        model.disable_policy()
-        model.to(self.__device)
-        # trainer = NetworkTrainer(model, True, self.__device)
-        # trainer.lr_finder(tmp, 1e-7, 1e-1, 1e-3)
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=1e-8,
-            weight_decay=0.3,
-            betas=(0.85, 0.95),
-        )
-        lr_finder = LRFinder(model, optimizer, criterion)
-        # lr_finder.range_test(tmp, tmp_val, end_lr=1, num_iter=10)
-        lr_finder.range_test(tmp, end_lr=1, num_iter=10, accumulation_steps=10)
+        trainer.fit(dataloader, val_dataloader, 30, True)
 
     def find_lr(self):
         conn = sqlite3.connect(self.__training_args['db_path'])
@@ -177,9 +117,9 @@ class AlphaZero():
         model.disable_policy()
         model.to(self.__device)
         trainer = NetworkTrainer(model, True, self.__device)
-        trainer.lr_finder(tmp, 1e-8, 1, 5e-4)
-
+        trainer.lr_finder(tmp, 1e-5, 0.1, 0.0015, 100)
 
 if __name__ == "__main__":
     az = AlphaZero()
-    az.find_lr()
+    # az.find_lr()
+    az.train_value()
