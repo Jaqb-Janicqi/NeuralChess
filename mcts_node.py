@@ -27,7 +27,7 @@ class Node():
         self.__legal_mask = np.full(1968, -np.inf, dtype=np.float32)
 
     def add_child(self, move: chess.Move) -> None:
-        child_state = self.__state.copy(stack=False)
+        child_state = self.__state.copy()
         child_state.push(move)
         action = self.__action_space.get_key(move)
         self.__children[action] = Node(
@@ -108,7 +108,7 @@ class Node():
 
     @property
     def is_terminal(self) -> bool:
-        return self.__state.is_game_over()
+        return self.__state.is_game_over(True)
 
     @property
     def legal_moves(self) -> list:
@@ -186,7 +186,7 @@ class Node():
         # create halfmove matrix
         halfmove_matrix = np.full((8, 8), halfmove, dtype=np.float32)
         matrices.append(halfmove_matrix)
-        return np.array(matrices)
+        return np.array(matrices).astype(np.float32)
 
     @property
     def is_expanded(self) -> bool:
