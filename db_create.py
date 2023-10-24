@@ -9,7 +9,7 @@ from multiprocessing import Pool
 import time
 import io
 from mcts_node import Node
-from db_dataloader import db_dataloader
+from db_dataloader import DataLoader
 import stockfish
 from cache_read_priority import Cache
 
@@ -55,18 +55,16 @@ def insert_or_abort(conn, fen, cp, prob, encoded):
         VALUES (?, ?, ?, ?)
     """, (fen, cp, prob, encoded))
 
+def insert_or_nothing(conn, fen, cp, prob, encoded):
+    # Insert or update nothing
+    conn.execute("""
+        INSERT OR IGNORE INTO positions (fen, cp, prob, encoded)
+        VALUES (?, ?, ?, ?)
+    """, (fen, cp, prob, encoded))
+
 
 def get_position_count(conn):
     return conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
-
-
-def safe_commit(conn):
-    for retry in range(10):
-        try:
-            conn.commit()
-            return
-        except sqlite3.OperationalError:
-            time.sleep(5)
 
 
 def process_game_by_io(conn, line):
@@ -84,13 +82,14 @@ def process_game_by_io(conn, line):
                 continue
             # get the fen
             fen = game.board().fen()
+            node = Node(1, game.board(), {}, None, None)
             # get the evaluation
             centipawns = game.eval()
             centipawns = centipawns.relative.score(mate_score=12800)
             # get the probability from the evaluation
             prob_eval = map_centipawns_to_probability(centipawns)
             # insert or replace the position
-            insert_or_replace_position(conn, fen, centipawns, prob_eval)
+            insert_or_nothing(conn, fen, centipawns, prob_eval, node.encoded.tobytes())
             game = game.next()
     except Exception as e:
         print(e)
@@ -98,10 +97,22 @@ def process_game_by_io(conn, line):
 
 
 def shard_parser(shard_path) -> None:
-    conn = sqlite3.connect('C:/sqlite_chess_db/chess_positions.db')
+    start = 84785579
+    conn = sqlite3.connect('C:/sqlite_chess_db/lichess.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS positions (
+            id INTEGER PRIMARY KEY,
+            fen TEXT NOT NULL UNIQUE,
+            cp INTEGER NOT NULL,
+            prob REAL NOT NULL,
+            encoded BLOB NOT NULL
+        );
+    """)
+    conn.commit()
+
     shard_name = os.path.basename(shard_path)
-    pbar = tqdm.tqdm(total=100000000,
-                     desc="Processing shard " + shard_name + ".")
+    pbar = tqdm.tqdm(desc="Processing shard " + shard_name + ".", dynamic_ncols=True)
     eval_games_count = 0
     with open(shard_path) as file:
         # select until "1." is found
@@ -112,58 +123,44 @@ def shard_parser(shard_path) -> None:
                 if '[%eval' in line:
                     process_game_by_io(conn, line)
                     eval_games_count += 1
-                if eval_games_count % 500 == 0:
-                    conn.commit()
+                    pbar.set_postfix({"eval games": eval_games_count})
+                    if eval_games_count % 100 == 0:
+                        conn.commit()
         conn.commit()
         conn.close()
 
-def adapt_array(arr):
-    """
-    http://stackoverflow.com/a/31312102/190597 (SoulNibbler)
-    """
-    out = io.BytesIO()
-    np.save(out, arr)
-    out.seek(0)
-    return sqlite3.Binary(out.read())
 
-
-def convert_array(text):
-    out = io.BytesIO(text)
-    out.seek(0)
-    return np.load(out)
-
-
-def db_parser():
-    conn = sqlite3.connect('C:/sqlite_chess_db/chess_positions.db')
-    table_name = "positions"
+def check_encoded():
+    conn = sqlite3.connect('C:/sqlite_chess_db/lichess.db')
     cursor = conn.cursor()
-    sqlite3.register_adapter(np.ndarray, adapt_array)
-    sqlite3.register_converter("array", convert_array)
-    # select all rows where "encoded" is not null
-    id, fen, cp, prob, encoded = cursor.execute(
-        "SELECT * FROM {}".format(table_name)).fetchone()
-    encoded = convert_array(encoded)
-    print(encoded.shape)
-    
-    
-    id_count = get_position_count(conn)
-    for idx in tqdm.trange(id_count):
-        idx = idx + 1
-        id, fen, cp, prob, encoded = cursor.execute(
-            "SELECT * FROM {} WHERE id = {}".format(table_name, idx)).fetchone()
-        # x = conn.execute(
-        #         f"SELECT * FROM positions LIMIT {10} OFFSET {0}")
-        board = chess.Board(fen)
-        node = Node(1, board, {}, None, None)
-        insert_or_replace_position(conn, fen, cp, prob, node.encoded)
-        if idx % 500 == 0:
-            conn.commit()
+    max_id = cursor.execute(
+        "SELECT MAX(id) FROM positions").fetchone()[0]
+    min_id = cursor.execute(
+        "SELECT MIN(id) FROM positions").fetchone()[0]
+    replace_query = "INSERT OR REPLACE INTO positions (id, fen, cp, prob, encoded) VALUES (?, ?, ?, ?, ?)"
+    pbar = tqdm.tqdm(dynamic_ncols=True)
+    for i in range(min_id, max_id + 1):
+        x = cursor.execute(
+            "SELECT * FROM positions where id=? limit 1", (i,)).fetchall()
+        for row in x:
+            id, fen, cp, prob, encoded = row
+            board = chess.Board(fen=fen)
+            node = Node(1, board, {}, None, None)
+            node_encoded = node.encoded.tobytes()
+            try:
+                assert encoded == node_encoded
+            except:
+                conn.execute(replace_query, (id, fen, cp, prob, node_encoded))
+                conn.commit()
+                pbar.update(1)
     conn.commit()
 
 
+def convert_to_numpy(arr):
+    return np.frombuffer(arr, dtype=np.float32).reshape(16, 8, 8)
+
 
 def create_new(total_time):
-    start_pos = chess.Board()
     start_time = time.time()
     conn = sqlite3.connect('C:/sqlite_chess_db/chess_positions.db')
     cursor = conn.cursor()
@@ -175,32 +172,54 @@ def create_new(total_time):
         }
     )
     print(stockfish_engine.get_parameters())
-    # create the table
-    sqlite3.register_adapter(np.ndarray, adapt_array)
-    sqlite3.register_converter("array", convert_array)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS positions (
             id INTEGER PRIMARY KEY,
             fen TEXT NOT NULL,
             cp INTEGER NOT NULL,
             prob REAL NOT NULL,
-            encoded array NOT NULL
+            encoded BLOB NOT NULL
         )
     """)
     conn.commit()
     pos_count = 0
     pbar = tqdm.tqdm()
-    cache = Cache(8192)
-    
+    cache = Cache(6000)
+
+    db_size = conn.execute(
+        "SELECT COUNT(*) FROM positions").fetchone()[0]
+
+    db_loader = DataLoader(
+        db_path='C:/sqlite_chess_db/chess_positions.db',
+        table_name='positions',
+        num_batches=0,
+        batch_size=1024,
+        min_index=1,
+        max_index=db_size*0.9,
+        random=True,
+        replace=False,
+        shuffle=False,
+        slice_size=64,
+        specials={'encoded': convert_to_numpy}
+    )
+    db_loader.start()
+    for batch in db_loader:
+        for fen in batch[1]:
+            fen_str = str(fen)
+            cache.add(fen_str, True)
+            pbar.update(1)
+
     while start_time + total_time > time.time():
-        # play a game
         board = chess.Board()
         node = Node(1, board, {}, None, None)
+
         while not board.is_game_over(claim_draw=True):
             board.push(np.random.choice(list(board.legal_moves)))
             fen = board.fen()
             if fen in cache:
                 continue
+            if board.fullmove_number > 50:
+                break
             cache.add(fen, True)
             stockfish_engine.set_fen_position(fen)
             cp = stockfish_engine.get_evaluation()
@@ -208,17 +227,22 @@ def create_new(total_time):
                 if cp["value"] == 0:
                     cp = 12800 * np.sign(cp["value"])
                 else:
-                    cp = 12800 / ((abs(cp["value"]) + 1) * np.sign(cp["value"]))
+                    cp = 12800 / ((abs(cp["value"]) + 1)
+                                  * np.sign(cp["value"]))
             else:
                 cp = cp["value"]
             prob = map_centipawns_to_probability(cp)
-            insert_or_abort(conn, fen, cp, prob, node.encoded)
+            encode_str = node.encoded.tobytes()
+            insert_or_abort(conn, fen, cp, prob, encode_str)
             pos_count += 1
             pbar.update(1)
             if pos_count % 100 == 0:
                 conn.commit()
     conn.commit()
+    conn.close()
 
 
 if __name__ == '__main__':
-    create_new(16 * 60*60)
+    # create_new(16 * 60*60)
+    shard_parser('E:/chess_db/shard_2023-05.pgn')
+    # shard_parser('E:/chess_db/shard_2023-06.pgn')
