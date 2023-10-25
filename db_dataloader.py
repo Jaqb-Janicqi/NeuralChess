@@ -66,6 +66,7 @@ class DataLoader(mp.Process):
         self.__last_idx_checked = self.__min_index
         self.__restart_latch = mp.Event()
         self.__running = True
+        self.__init_completed = False
 
     def __get_table_structure(self):
         conn = sqlite3.connect(self.__db_path)
@@ -100,7 +101,7 @@ class DataLoader(mp.Process):
         if self.__num_batches == 0:
             self.__num_batches = np.ceil(
                 self.__max_index / self.__batch_size).astype(np.uint64)
-            self.__batches_left = self.__num_batches
+        self.__batches_left = self.__num_batches
         if self.__slice_size == 0:
             self.__slice_size = self.__batch_size
         if self.__last_idx < self.__min_index:
@@ -146,6 +147,9 @@ class DataLoader(mp.Process):
                         row[special_idx] = func(row[special_idx])
             batch.extend(slc)
 
+        if not batch:
+            return False
+
         if self.__shuffle:
             batch = random.sample(batch, len(batch))
 
@@ -168,6 +172,7 @@ class DataLoader(mp.Process):
         labels = torch.from_numpy(np.array(labels)).squeeze().float()
         out_batch = (data, labels)
         self.__batch_buffer.put(out_batch)
+        return True
 
     def run(self):
         while True:
@@ -180,8 +185,11 @@ class DataLoader(mp.Process):
             self.__last_idx_checked = self.__min_index
 
             self.__running = True
+            self.__init_completed = True
             for _ in range(self.__num_batches):
-                self.__create_batch()
+                created = self.__create_batch()
+                if not created:
+                    break
             self.__running = False
             self.__restart_latch.wait()
             self.__restart_latch.clear()
@@ -198,7 +206,7 @@ class DataLoader(mp.Process):
 
     def __no_replace_idx(self):
         # draw random indices until 80% of the indices are drawn
-        while self.__max_index // self.__slice_size * 0.8 > self.__idx_drawn:
+        while (self.__max_index - self.__min_index) // self.__slice_size * 0.8 > self.__idx_drawn:
             idx = self.__random_idx()
             if self.__replace_masker[idx]:
                 continue
@@ -235,7 +243,7 @@ class DataLoader(mp.Process):
         if self.__batches_left <= 0:
             self.__batches_left = self.__num_batches
             raise StopIteration
-        if self.__batch_buffer.empty() and not self.__running:
+        if self.__batch_buffer.empty() and not self.__running and self.__init_completed:
             self.restart()
         self.__batches_left -= 1
         try:
@@ -258,16 +266,20 @@ def convert_to_numpy(arr):
 
 
 if __name__ == "__main__":
-    conn = sqlite3.connect('C:/sqlite_chess_db/chess_positions.db')
+    conn = sqlite3.connect('C:/sqlite_chess_db/lichess.db')
     db_size = conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
     conn.close()
+    db_checked = 22547088
+    x = (db_checked - 1) // 64
+
+
     tmp = DataLoader(
-        db_path='C:/sqlite_chess_db/chess_positions.db',
+        db_path='C:/sqlite_chess_db/lichess.db',
         table_name='positions',
-        num_batches=0,
+        num_batches=2000,
         batch_size=1024,
         min_index=1,
-        max_index=db_size*0.1,
+        max_index=db_size*0.8,
         random=True,
         replace=False,
         shuffle=True,
@@ -277,9 +289,13 @@ if __name__ == "__main__":
         label_cols=['prob']
     )
     tmp.start()
+    corrupt = 0
+    bnum = 0
     for batch in tmp:
+        print(bnum)
         x, y = batch
-        print(batch[0])
-    print("reset")
-    for batch in tmp:
-        print(batch[0])
+        if x.shape[0] == 0 or y.shape[0] == 0:
+            corrupt += 1
+        bnum += 1
+    print()
+    print(corrupt)
