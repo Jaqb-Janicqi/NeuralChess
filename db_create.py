@@ -55,6 +55,7 @@ def insert_or_abort(conn, fen, cp, prob, encoded):
         VALUES (?, ?, ?, ?)
     """, (fen, cp, prob, encoded))
 
+
 def insert_or_nothing(conn, fen, cp, prob, encoded):
     # Insert or update nothing
     conn.execute("""
@@ -89,7 +90,8 @@ def process_game_by_io(conn, line):
             # get the probability from the evaluation
             prob_eval = map_centipawns_to_probability(centipawns)
             # insert or replace the position
-            insert_or_nothing(conn, fen, centipawns, prob_eval, node.encoded.tobytes())
+            insert_or_nothing(conn, fen, centipawns,
+                              prob_eval, node.encoded.tobytes())
             game = game.next()
     except Exception as e:
         print(e)
@@ -112,7 +114,8 @@ def shard_parser(shard_path) -> None:
     conn.commit()
 
     shard_name = os.path.basename(shard_path)
-    pbar = tqdm.tqdm(desc="Processing shard " + shard_name + ".", dynamic_ncols=True)
+    pbar = tqdm.tqdm(desc="Processing shard " +
+                     shard_name + ".", dynamic_ncols=True)
     eval_games_count = 0
     with open(shard_path) as file:
         # select until "1." is found
@@ -162,7 +165,7 @@ def convert_to_numpy(arr):
 
 def create_new(total_time):
     start_time = time.time()
-    conn = sqlite3.connect('C:/sqlite_chess_db/chess_positions.db')
+    conn = sqlite3.connect('C:/sqlite_chess_db/stockfish.db')
     cursor = conn.cursor()
     stockfish_engine = stockfish.Stockfish(
         path="D:/stockryba/stockfish-windows-x86-64-avx2.exe",
@@ -184,29 +187,20 @@ def create_new(total_time):
     conn.commit()
     pos_count = 0
     pbar = tqdm.tqdm()
-    cache = Cache(6000)
+    # cache = Cache(6000)
+    cache = {}
 
     db_size = conn.execute(
         "SELECT COUNT(*) FROM positions").fetchone()[0]
 
-    db_loader = DataLoader(
-        db_path='C:/sqlite_chess_db/chess_positions.db',
-        table_name='positions',
-        num_batches=0,
-        batch_size=1024,
-        min_index=1,
-        max_index=db_size*0.9,
-        random=True,
-        replace=False,
-        shuffle=False,
-        slice_size=64,
-        specials={'encoded': convert_to_numpy}
-    )
-    db_loader.start()
-    for batch in db_loader:
-        for fen in batch[1]:
-            fen_str = str(fen)
-            cache.add(fen_str, True)
+    # get all the positions one by one
+    for i in range(1, db_size + 1):
+        x = cursor.execute(
+            "SELECT * FROM positions where id=? limit 1", (i,)).fetchall()
+        for row in x:
+            id, fen, cp, prob, encoded = row
+            cache[fen] = True
+            pos_count += 1
             pbar.update(1)
 
     while start_time + total_time > time.time():
@@ -220,7 +214,7 @@ def create_new(total_time):
                 continue
             if board.fullmove_number > 50:
                 break
-            cache.add(fen, True)
+            cache[fen] = True
             stockfish_engine.set_fen_position(fen)
             cp = stockfish_engine.get_evaluation()
             if cp["type"] == "mate":
@@ -233,7 +227,7 @@ def create_new(total_time):
                 cp = cp["value"]
             prob = map_centipawns_to_probability(cp)
             encode_str = node.encoded.tobytes()
-            insert_or_abort(conn, fen, cp, prob, encode_str)
+            insert_or_nothing(conn, fen, cp, prob, encode_str)
             pos_count += 1
             pbar.update(1)
             if pos_count % 100 == 0:
@@ -243,6 +237,6 @@ def create_new(total_time):
 
 
 if __name__ == '__main__':
-    # create_new(16 * 60*60)
-    shard_parser('E:/chess_db/shard_2023-05.pgn')
+    create_new(10 * 60*60)
+    # shard_parser('E:/chess_db/shard_2023-05.pgn')
     # shard_parser('E:/chess_db/shard_2023-06.pgn')
