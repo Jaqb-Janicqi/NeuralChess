@@ -19,7 +19,7 @@ class NetworkTrainer(TrainingModule):
         value = value.to(self._device)
         value_hat = self._model(state)
         value_loss = nn.functional.mse_loss(value_hat, value)
-        self.log("value_loss", value_loss.item())
+        self.log("train_loss", value_loss.item())
         return value_loss
 
     def true_training_step(self, batch) -> float:
@@ -33,7 +33,7 @@ class NetworkTrainer(TrainingModule):
         loss = policy_loss + value_loss
         self.log("policy_loss", policy_loss.item())
         self.log("value_loss", value_loss.item())
-        self.log("loss", loss.item())
+        self.log("train_loss", loss.item())
         return loss
 
     def training_step(self, batch):
@@ -46,17 +46,18 @@ class NetworkTrainer(TrainingModule):
         optimizer = torch.optim.AdamW(
             self._model.parameters(),
             lr=1e-4,
-            weight_decay=0.001,
+            weight_decay=0.3,
             betas=(0.85, 0.95),
         )
         self._optimizers['optimizer'] = optimizer
+        self._step_list.append(self._optimizers['optimizer'])
         scheduler = Scheduler(
             optimizer=optimizer,
             num_steps=self.steps_per_epoch,
-            max_lr=0.002,
-            min_lr=1e-4,
+            max_lr=3e-4,
+            min_lr=1e-5,
             pct_start=0.2,
-            pct_max=0.1,
+            pct_max=0.2,
             annealing='cosine',
         )
         self._step_list.append(scheduler)

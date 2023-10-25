@@ -1,5 +1,6 @@
 import os
 import sys
+from matplotlib import pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,6 +9,7 @@ import torch_directml as dml
 from tqdm import tqdm
 from scipy.signal import savgol_filter
 import pickle
+
 
 class TrainingModule:
     def __init__(self, model, device=dml.device()):
@@ -52,9 +54,11 @@ class TrainingModule:
             start_epoch, _ = self.load(save_path)
         if max_epochs is None:
             max_epochs = sys.maxsize ** 10
+
+        recent_loss = 0
         for epoch in range(start_epoch, max_epochs):
-            pbar = tqdm(
-                train_loader, desc=f'Epoch {epoch}', leave=False, dynamic_ncols=True, total=len(train_loader))
+            pbar = tqdm(desc=f'Epoch {epoch}', leave=False,
+                        dynamic_ncols=True, total=len(train_loader))
 
             self._model.train()
             for batch in train_loader:
@@ -63,6 +67,17 @@ class TrainingModule:
                 loss.backward()
                 for func in self._step_list:
                     func.step()
+
+                pbar.update(1)
+                lr = self._optimizers['optimizer'].param_groups[0]['lr']
+                pbar.set_description(
+                    f'Epoch {epoch}, lr: {lr}')
+
+                if len(self._log_dict['train_loss']) > 100:
+                    recent_loss = sum(
+                        self._log_dict['train_loss'][-100:]) / 100
+                    pbar.set_postfix(
+                        {'recent_averaged_loss': recent_loss})
 
             if val_loader is None:
                 self.log('avg_loss',
@@ -79,17 +94,43 @@ class TrainingModule:
                     if self._log_dict['avg_loss'][-1] > np.all(self._log_dict['avg_loss'][-10:-2]):
                         break
 
-            self.save('models/', epoch, self._log_dict['avg_loss'][-1])
+            if recent_loss == 0:
+                recent_loss = sum(self._log_dict['train_loss']) / \
+                    len(self._log_dict['train_loss'])
+            self.save('pre_training/', epoch, recent_loss)
             self.on_epoch_end(self._log_dict)
+            pbar.close()
+
+        smoothing_window = 51
+        loss = savgol_filter(
+            self.log['train_loss'], smoothing_window, 3, mode='nearest')
+        fig, ax = plt.subplots()
+        ax.plot(loss)
+        ax.set_xlabel('Batch')
+        ax.set_ylabel('Loss')
+        ax.set_title('Training Loss')
+        plt.savefig('training_loss.png')
+        plt.show()
+
+        if val_loader is not None:
+            loss = savgol_filter(
+                self.log['val_loss'], smoothing_window, 3, mode='nearest')
+            fig, ax = plt.subplots()
+            ax.plot(loss)
+            ax.set_xlabel('Batch')
+            ax.set_ylabel('Loss')
+            ax.set_title('Validation Loss')
+            plt.savefig('validation_loss.png')
+            plt.show()
 
     def save(self, path, epoch, loss):
+        # save model
         torch.save({
             'epoch': epoch,
             'model_state_dict': self._model.state_dict(),
             'optimizer_state_dict': self._optimizers['optimizer'].state_dict(),
             'loss': loss,
-
-        }, path)
+        }, f'{path}model_{epoch}_{loss}.pth')
 
     def load(self, path):
         checkpoint = torch.load(path)
@@ -119,7 +160,8 @@ class TrainingModule:
             try:
                 for batch in train_loader:
                     self._optimizers['optimizer'].param_groups[0]['lr'] = lr
-                    pbar.set_postfix({'current lr:': self._optimizers['optimizer'].param_groups[0]['lr']})
+                    pbar.set_postfix(
+                        {'current lr:': self._optimizers['optimizer'].param_groups[0]['lr']})
                     loss = self.training_step(batch)
                     self._optimizers['optimizer'].zero_grad()
                     loss.backward()
@@ -137,9 +179,6 @@ class TrainingModule:
                 break
         pbar.close()
 
-        # plot lr vs loss
-        import matplotlib.pyplot as plt
-
         # check directory for files and append a number if it exists
         file_num = 0
         if os.path.exists('lr_finder.png'):
@@ -148,20 +187,11 @@ class TrainingModule:
 
         lr = np.array(self._log_dict['lr'])
         loss = np.array(self._log_dict['loss'])
-        fig, ax = plt.subplots()
-        ax.plot(lr, loss)
-        ax.set_xscale('log')
-        ax.set_xlabel('Learning Rate')
-        ax.set_ylabel('Loss')
-        ax.set_title('Learning Rate Finder')
-        pickle.dump(fig, open(f'lr_finder_{file_num}.pickle', 'wb'))
-        fig.savefig(f'lr_finder_{file_num}.png')
-
         # compute savgol filter
         if smoothing_window % 2 == 0:
             smoothing_window += 1
-
         loss = savgol_filter(loss, smoothing_window, 3, mode='nearest')
+
         fig, ax = plt.subplots()
         ax.plot(lr, loss)
         ax.set_xscale('log')
@@ -170,8 +200,8 @@ class TrainingModule:
         ax.set_title('Learning Rate Finder')
         pickle.dump(fig, open(f'lr_finder_smooth_{file_num}.pickle', 'wb'))
         fig.savefig(f'lr_finder_smooth_{file_num}.png')
-        plt.show()
-
+        plt.show(block=True)
+        return
 
     def on_epoch_end(self, log_dict):
         pass
