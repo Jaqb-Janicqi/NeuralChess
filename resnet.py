@@ -36,7 +36,6 @@ class ResNet(nn.Module):
         self.blocks = nn.ModuleList(
             [ResBlock(num_features) for _ in range(num_blocks)]
         )
-        self.blocks = nn.Sequential(*self.blocks)
         p_size, v_size = self.calculate_input_size(
             num_features, input_features)
         self.policy = nn.Sequential(
@@ -61,7 +60,8 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = self.start_block(x)
-        x = self.blocks(x)
+        for block in self.blocks:
+            x = block(x)
         p = self.policy(x).squeeze()
         v = self.value(x).squeeze()
         if self.__disable_policy:
@@ -95,7 +95,8 @@ class ResNet(nn.Module):
         )
 
         x = start_block_copy(x)
-        x = blocks_copy(x)
+        for block in blocks_copy:
+            x = block(x)
         p = p_seqence(x)
         v = v_seqence(x)
         return p.shape[1], v.shape[1]
