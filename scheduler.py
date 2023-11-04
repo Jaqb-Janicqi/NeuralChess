@@ -14,7 +14,7 @@ class Scheduler():
         self.__pct_max = pct_max
         self.__annealing = annealing
         self.__step_num = 0
-        self.reset()
+        self.restart()
 
     def lr_function(self, x):
         if x <= self.__num_steps * self.__pct_start:
@@ -50,7 +50,7 @@ class Scheduler():
         self.__optimizer.param_groups[0]['lr'] = self.lr_function(
             self.__step_num)
 
-    def reset(self):
+    def restart(self):
         self.__step_num = 0
         self.__optimizer.param_groups[0]['lr'] = self.lr_function(
             self.__step_num)
@@ -81,13 +81,30 @@ class Scheduler():
     def optimizer(self):
         return self.__optimizer
 
+    @property
+    def max_lr(self):
+        return self.__max_lr
+    
+    @max_lr.setter
+    def max_lr(self, max_lr):
+        self.__max_lr = max_lr
+    
+    @property
+    def min_lr(self):
+        return self.__min_lr
+    
+    @min_lr.setter
+    def min_lr(self, min_lr):
+        self.__min_lr = min_lr
+
 
 if __name__ == "__main__":
-    opt = torch.optim.Adam([torch.tensor(0.0)])
-    sch = Scheduler(opt, 10000, annealing="linear")
-    lrs = []
-    for i in range(10000):
-        sch.step()
-        lrs.append(opt.param_groups[0]['lr'])
-    plt.plot(lrs)
-    plt.show()
+    opt = torch.optim.ASGD([torch.zeros(1)], lr=1e-3)
+    params = opt.param_groups[0]
+    sch = Scheduler(opt, 4000, 
+            max_lr=1e-2,
+            min_lr=1e-8,
+            pct_start=0.2,
+            pct_max=0.05,
+            annealing='cosine',)
+    sch.max_lr = 1e-3

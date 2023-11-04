@@ -1,14 +1,22 @@
+import chess
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import itertools as it
+import seaborn as sns
+import pandas as pd
+from scipy.signal import savgol_filter
+from tqdm import tqdm
+import torch_directml as dml
+import torch.nn.functional as F
+import torch.nn as nn
 import os
 import sys
-from matplotlib import pyplot as plt
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch_directml as dml
-from tqdm import tqdm
-from scipy.signal import savgol_filter
-import pickle
+import optuna
+
+from mcts_node import Node
+torch.manual_seed(0)
 
 
 class TrainingModule:
@@ -16,9 +24,11 @@ class TrainingModule:
         self._model: nn.Module = model
         self._device = device
         self._optimizers = {}  # {key: optimizer}
+        self._schedulers = {}  # {key: scheduler}
         self._log_dict = {}  # {key: [value]}
         self._step_list = []  # [class]
         self._dataloaders = {}  # {key: dataloader}
+        self._save_path = ''
 
     def log(self, key, value):
         if key not in self._log_dict:
@@ -27,44 +37,60 @@ class TrainingModule:
 
     def training_step(self, batch):
         x, y = batch
-        x = torch.tensor(x).to(self._device)
-        y = torch.tensor(y).to(self._device)
+        x = x.to(self._device)
+        y = y.to(self._device)
         y_hat = self._model(x)
         loss = F.cross_entropy(y_hat, y)
         del x, y, y_hat
-        self.log('train_loss', loss.item())
         return loss
 
     def test_step(self, batch):
         x, y = batch
-        x = torch.tensor(x).to(self._device)
-        y = torch.tensor(y).to(self._device)
+        x = x.to(self._device)
+        y = y.to(self._device)
         y_hat = self._model(x)
         loss = F.cross_entropy(y_hat, y)
-        self.log('test_loss', loss.item())
+        del x, y, y_hat
         return loss
+    
+    def convert_batch(self, batch):
+        fens, labels = batch
+        encoded = []
+        for fen in fens[0]:
+            state = chess.Board(fen)
+            node = Node(1, state, {})
+            encoded.append(node.encoded_dense)
+        encoded = np.array(encoded)
+        labels = np.array(labels[0])
+        encoded = torch.tensor(encoded).float().to(self._device)
+        labels = torch.tensor(labels).float().to(self._device)
+        batch = (encoded, labels)
+        return batch
 
-    def fit(self, train_loader, val_loader=None, max_epochs=None, early_stopping=False, save_path=None):
+    def fit(self, train_loader, val_loader=None, max_epochs=None, early_stopping=0, resume_path=None, plot=True, path=None):
         self._dataloaders['train_loader'] = train_loader
         if val_loader is not None:
             self._dataloaders['val_loader'] = val_loader
-        self.configure_optimizers()
+        if len(self._optimizers) == 0:
+            self.configure_optimizers()
         start_epoch = 0
-        if save_path is not None:
-            start_epoch, _ = self.load(save_path)
+        if resume_path is not None:
+            start_epoch, _ = self.load(resume_path)
         if max_epochs is None:
             max_epochs = sys.maxsize ** 10
 
         recent_loss = 0
-        for epoch in range(start_epoch, max_epochs):
+        for epoch in range(start_epoch+1, max_epochs+1):
             pbar = tqdm(desc=f'Epoch {epoch}', leave=False,
                         dynamic_ncols=True, total=len(train_loader))
 
             self._model.train()
             for batch in train_loader:
                 loss = self.training_step(batch)
+                self.log('train_loss', loss.item())
                 self._optimizers['optimizer'].zero_grad()
                 loss.backward()
+                del loss
                 for func in self._step_list:
                     func.step()
 
@@ -76,52 +102,63 @@ class TrainingModule:
                 if len(self._log_dict['train_loss']) > 100:
                     recent_loss = sum(
                         self._log_dict['train_loss'][-100:]) / 100
-                    pbar.set_postfix(
-                        {'recent_averaged_loss': recent_loss})
+                else:
+                    recent_loss = sum(
+                        self._log_dict['train_loss']) / len(self._log_dict['train_loss'])
+                pbar.set_postfix(
+                    {'recent_averaged_loss': recent_loss})
 
             if val_loader is None:
                 self.log('avg_loss',
                          sum(self._log_dict['train_loss']) / len(self._log_dict['train_loss']))
             else:
                 self._model.eval()
-                for batch in val_loader:
-                    loss = self.test_step(batch)
+                val_loss = 0
+                with torch.no_grad():
+                    for batch in val_loader:
+                        val_loss += self.test_step(batch).item()
+                self.log('val_loss', val_loss / len(val_loader))
                 self.log('avg_loss',
                          sum(self._log_dict['val_loss']) / len(self._log_dict['val_loss']))
 
-            if early_stopping:
-                if len(self._log_dict['avg_loss']) >= 10:
-                    if self._log_dict['avg_loss'][-1] > np.all(self._log_dict['avg_loss'][-10:-2]):
+            if early_stopping > 0:
+                if len(self._log_dict['avg_loss']) > early_stopping:
+                    if self._log_dict['avg_loss'][-1] > np.all(self._log_dict['avg_loss'][-early_stopping:-2]):
                         break
+
+                if len(self._log_dict['avg_loss'] > 1):
+                    if self._log_dict['avg_loss'][-1] > self._log_dict['avg_loss'][-2]:
+                        self.reduce_scheduler_lr()
 
             if recent_loss == 0:
                 recent_loss = sum(self._log_dict['train_loss']) / \
                     len(self._log_dict['train_loss'])
-            self.save('pre_training/', epoch, recent_loss)
+            if path is not None:
+                self.save(path, epoch, recent_loss)
             self.on_epoch_end(self._log_dict)
             pbar.close()
 
-        smoothing_window = 51
-        loss = savgol_filter(
-            self.log['train_loss'], smoothing_window, 3, mode='nearest')
-        fig, ax = plt.subplots()
-        ax.plot(loss)
-        ax.set_xlabel('Batch')
-        ax.set_ylabel('Loss')
-        ax.set_title('Training Loss')
-        plt.savefig('training_loss.png')
-        plt.show()
-
-        if val_loader is not None:
+        if plot:
+            smoothing_window = 51
             loss = savgol_filter(
-                self.log['val_loss'], smoothing_window, 3, mode='nearest')
+                self.log['train_loss'], smoothing_window, 3, mode='nearest')
             fig, ax = plt.subplots()
             ax.plot(loss)
             ax.set_xlabel('Batch')
             ax.set_ylabel('Loss')
-            ax.set_title('Validation Loss')
-            plt.savefig('validation_loss.png')
-            plt.show()
+            ax.set_title('Training Loss')
+            plt.savefig('training_loss.pdf')
+
+            if val_loader is not None:
+                loss2 = savgol_filter(
+                    self.log['val_loss'], smoothing_window, 3, mode='nearest')
+                fig2, ax2 = plt.subplots()
+                ax2.plot(loss2)
+                ax2.set_xlabel('Batch')
+                ax2.set_ylabel('Loss')
+                ax2.set_title('Validation Loss')
+                plt.savefig('validation_loss.pdf')
+            plt.show(block=True)
 
     def save(self, path, epoch, loss):
         # save model
@@ -142,6 +179,7 @@ class TrainingModule:
         return epoch, loss
 
     def configure_optimizers(self):
+        self._step_list = []
         self._optimizers['optimizer'] = torch.optim.AdamW(
             self._model.parameters(),
         )
@@ -151,13 +189,25 @@ class TrainingModule:
     def steps_per_epoch(self):
         return len(self._dataloaders['train_loader'])
 
-    def lr_finder(self, train_loader, start_lr, end_lr, exp_step_size, smoothing_window=50):
+    def on_epoch_end(self, log_dict):
+        pass
+
+    def reduce_scheduler_lr(self, factor=0.1):
+        for scheduler in self._schedulers.values():
+            max_lr = scheduler.max_lr
+            min_lr = scheduler.min_lr
+            scheduler.max_lr = max_lr * factor
+            scheduler.min_lr = min_lr * factor
+            
+
+    def lr_finder(self, train_loader, start_lr, end_lr, exp_step_size, smoothing_window=51):
         self._dataloaders['train_loader'] = train_loader
         self.configure_optimizers()
         lr = start_lr
         pbar = tqdm(desc=f'max_lr: {end_lr}', dynamic_ncols=True)
         while lr <= end_lr:
             try:
+                # sweep lr each batch
                 for batch in train_loader:
                     self._optimizers['optimizer'].param_groups[0]['lr'] = lr
                     pbar.set_postfix(
@@ -165,9 +215,9 @@ class TrainingModule:
                     loss = self.training_step(batch)
                     self._optimizers['optimizer'].zero_grad()
                     loss.backward()
-
                     self._optimizers['optimizer'].step()
-                    self.log('loss', loss.cpu().item())
+
+                    self.log('loss', loss.item())
                     self.log('lr', lr)
                     if lr > end_lr:
                         break
@@ -181,12 +231,13 @@ class TrainingModule:
 
         # check directory for files and append a number if it exists
         file_num = 0
-        if os.path.exists('lr_finder.png'):
-            while os.path.exists(f'lr_finder{file_num}.png'):
+        if os.path.exists(f'{self._save_path}lr_finder.png'):
+            while os.path.exists(f'{self._save_path}lr_finder{file_num}.png'):
                 file_num += 1
 
         lr = np.array(self._log_dict['lr'])
         loss = np.array(self._log_dict['loss'])
+
         # compute savgol filter
         if smoothing_window % 2 == 0:
             smoothing_window += 1
@@ -198,10 +249,236 @@ class TrainingModule:
         ax.set_xlabel('Learning Rate')
         ax.set_ylabel('Loss')
         ax.set_title('Learning Rate Finder')
-        pickle.dump(fig, open(f'lr_finder_smooth_{file_num}.pickle', 'wb'))
-        fig.savefig(f'lr_finder_smooth_{file_num}.png')
-        plt.show(block=True)
-        return
+        fig.savefig(f'{self._save_path}lr_finder_{file_num}.pdf')
 
-    def on_epoch_end(self, log_dict):
-        pass
+    def grid_search(self, dataloader, val_dataloader, params, smoothing_window=50):
+        self._dataloaders['train_loader'] = dataloader
+        self._dataloaders['val_loader'] = val_dataloader
+        param_keys = list(params.keys())
+        if smoothing_window % 2 != 0:
+            smoothing_window += 1
+        self.configure_optimizers()
+        for obj in self._step_list:
+            if not isinstance(obj, torch.optim.Optimizer):
+                self._step_list.remove(obj)
+
+        # save empty model
+        torch.save({
+            'model_state_dict': self._model.state_dict(),
+            'optimizer_state_dict': self._optimizers['optimizer'].state_dict(),
+        }, f'grid_search.pth')
+
+        num_steps = 1
+        for key in param_keys:
+            num_steps *= len(params[key])
+        pbar = tqdm(
+            desc=f'Grid Search', dynamic_ncols=True, total=num_steps)
+
+        meshgrid = list(it.product(*params.values()))
+
+        data_dict = {}
+        for key in param_keys:
+            data_dict[key] = []
+        data_dict['val_loss'] = []
+        data_dict['train_loss'] = []
+
+        for i in range(num_steps):
+            current_params = {}
+            for j, key in enumerate(param_keys):
+                current_params[key] = meshgrid[i][j]
+                self._optimizers['optimizer'].param_groups[0][key] = meshgrid[i][j]
+                data_dict[key].append(meshgrid[i][j])
+            pbar.set_postfix(current_params)
+
+            self.fit(dataloader, val_dataloader, max_epochs=1, plot=False)
+            data_dict['val_loss'].append(self._log_dict['val_loss'])
+            data_dict['train_loss'].append(self._log_dict['train_loss'])
+            self._log_dict['val_loss'] = []
+            self._log_dict['train_loss'] = []
+            pbar.update(1)
+
+            # reset model and optimizer
+            self._model.load_state_dict(
+                torch.load('grid_search.pth')['model_state_dict'])
+            self._optimizers['optimizer'].load_state_dict(
+                torch.load('grid_search.pth')['optimizer_state_dict'])
+        pbar.close()
+
+        # check directory for files and append a number if it exists
+        file_num = 0
+        while os.path.exists(f'grid_search{file_num}.csv'):
+            file_num += 1
+
+        dframe = pd.DataFrame(data_dict)
+        dframe.to_csv(f'grid_search{file_num}.csv', index=False)
+
+        sns.set_theme()
+        dframe['val_loss'] = dframe['val_loss'].str.strip('[]').astype(float)
+        dframe.sort_values(by=['betas'], inplace=True)
+        color_norm = plt.Normalize(
+            vmin=dframe['val_loss'].min(), vmax=dframe['val_loss'].max())
+
+        categorical_count = len(dframe['betas'].unique())
+        nrows = np.ceil(categorical_count/3).astype(int)
+        fig, axes = plt.subplots(nrows, 3, sharex=False,
+                                 sharey=False, squeeze=False)
+        fig.set_figwidth(3*8)
+        fig.set_figheight(nrows*8)
+        axes = axes.flatten()
+        for i, beta in enumerate(dframe['betas'].unique()):
+            df = dframe[dframe['betas'] == beta]
+            sns.heatmap(df.pivot_table(index='wd', columns='lr', values='val_loss'), cmap="viridis", norm=color_norm, cbar_kws={
+                        'label': 'Validation Loss'}, ax=axes[i], annot=True, fmt='.6f', annot_kws={'fontsize': 8})
+            axes[i].set_title(f'Beta: {beta}')
+        # remove empty plots
+        for i in range(categorical_count, len(axes)):
+            fig.delaxes(axes[i])
+        plt.savefig(f'grid_search{file_num}.pdf')
+
+        for i, beta in enumerate(dframe['betas'].unique()):
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            # set size
+            fig.set_figwidth(20)
+            fig.set_figheight(10)
+            df = dframe[dframe['betas'] == beta]
+            num_lines = len(df)
+            colors = sns.color_palette("viridis", num_lines)
+            ax.set_prop_cycle(color=colors)
+            for i in range(len(df)):
+                t_loss = df.iloc[i]['train_loss']
+                t_loss = t_loss.strip('[]').replace(' ', '').split(',')
+                t_loss = [float(i) for i in t_loss]
+                t_loss = savgol_filter(t_loss, 51, 3, mode='nearest')
+                ax.plot(
+                    t_loss, label=f'lr: {df.iloc[i]["lr"]}, wd: {df.iloc[i]["wd"]}')
+            box = ax.get_position()
+            ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])
+            ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            plt.title(f'Beta: {beta}')
+            plt.xlabel('Batch')
+            plt.ylabel('Loss')
+            plt.savefig(f'beta_{beta}.pdf')
+            plt.close()
+
+    def _optuna_objective(self, trial):
+        # reset model and optimizer
+        self._model.load_state_dict(
+            torch.load(f'{self._save_path}grid_search.pth')['model_state_dict'])
+        self._optimizers['optimizer'].load_state_dict(
+            torch.load(f'{self._save_path}grid_search.pth')['optimizer_state_dict'])
+        running_loss = []
+
+        # generate parameters
+        params = {
+            'lr': trial.suggest_float('lr', 1e-6, 1, log=True),
+            # 'lambd': trial.suggest_float('lambd', 1e-4, 1, log=True),
+            # 'alpha': trial.suggest_float('alpha', 0.7, 1, log=False),
+            'weight_decay': trial.suggest_float('weight_decay', 1e-6, 1, log=True),
+            'betas': trial.suggest_categorical('betas', [str((0.85, 0.95)), str((0.9, 0.99))])
+        }
+        tmp = params['betas'].strip('()').split(',')
+        params['betas'] = (float(tmp[0]), float(tmp[1]))
+        for key in params.keys():
+            self._optimizers['optimizer'].param_groups[0][key] = params[key]
+
+        train_bar = tqdm(
+            desc=f'Optuna Trial',
+            dynamic_ncols=True,
+            total=len(self._dataloaders['train_loader']),
+            leave=False
+        )
+
+        self._model.train()
+        for step, batch in enumerate(self._dataloaders['train_loader']):
+            loss = self.training_step(batch)
+            self._optimizers['optimizer'].zero_grad()
+            loss.backward()
+            loss = loss.item()
+            running_loss.append(loss)
+
+            train_bar.update(1)
+            for func in self._step_list:
+                func.step()
+
+            if len(running_loss) > 1/(len(batch[0])//16)*6400:  # average over 100k samples
+                running_loss.pop(0)
+            avg_loss = sum(running_loss) / len(running_loss)
+            train_bar.set_postfix({'loss': loss, 'average loss': avg_loss})
+            trial.report(avg_loss, step)
+
+            if trial.should_prune() or avg_loss > 1:
+                train_bar.close()
+                self.on_epoch_end(self._log_dict)
+                raise optuna.exceptions.TrialPruned()
+
+        train_bar.close()
+        self.on_epoch_end(self._log_dict)
+
+        # save model
+        torch.save({
+            'model_state_dict': self._model.state_dict(),
+            'optimizer_state_dict': self._optimizers['optimizer'].state_dict(),
+        }, f'{self._save_path}grid_search{trial.number}.pth')
+        return avg_loss
+
+    def optuna_study(self, train_loader, study_name, n_trials=100, timeout=None):
+        self._dataloaders['train_loader'] = train_loader
+        self.configure_optimizers()
+        for obj in self._step_list:
+            if not isinstance(obj, torch.optim.Optimizer):
+                self._step_list.remove(obj)
+        self._save_path = f'{study_name}/'
+        if not os.path.exists(self._save_path):
+            os.makedirs(self._save_path)
+
+        # save empty model
+        torch.save({
+            'model_state_dict': self._model.state_dict(),
+            'optimizer_state_dict': self._optimizers['optimizer'].state_dict(),
+        }, f'{self._save_path}grid_search.pth')
+
+        study = optuna.create_study(
+            study_name=study_name, load_if_exists=True, direction='minimize', storage=f'sqlite:///{self._save_path}{study_name}.db')
+        study.optimize(self._optuna_objective,
+                       n_trials=n_trials, timeout=timeout)
+
+        if os.path.exists(f'{study_name}.csv'):
+            dframe = pd.read_csv(f'{study_name}.csv')
+            dframe = dframe.append(
+                pd.DataFrame(study.trials_dataframe()), ignore_index=True)
+        else:
+            dframe = pd.DataFrame(study.trials_dataframe())
+        dframe.to_csv(f'{self._save_path}{study_name}.csv', index=False)
+
+
+if __name__ == "__main__":
+    dframe = pd.read_csv('grid_search4.csv')
+    for i, beta in enumerate(dframe['betas'].unique()):
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        # set size
+        fig.set_figwidth(20)
+        fig.set_figheight(10)
+        df = dframe[dframe['betas'] == beta]
+        df.sort_values(by=['val_loss'], inplace=True)
+        num_lines = len(df)
+        colors = sns.color_palette("viridis", num_lines)
+        ax.set_prop_cycle(color=colors)
+        for i in range(len(df)):
+            t_loss = df.iloc[i]['train_loss']
+            t_loss = t_loss.strip('[]').replace(' ', '').split(',')
+            t_loss = [float(i) for i in t_loss]
+            t_loss = savgol_filter(t_loss, 51, 3, mode='nearest')
+            if np.any(t_loss > 0.6):
+                continue
+            ax.plot(
+                t_loss, label=f'lr: {df.iloc[i]["lr"]}, wd: {df.iloc[i]["wd"]}')
+        box = ax.get_position()
+        ax.set_position([box.x0, box.y0, box.width * 0.9, box.height])
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.title(f'Beta: {beta}')
+        plt.xlabel('Batch')
+        plt.ylabel('Loss')
+        plt.savefig(f'beta_{beta}.pdf')
+        plt.close()

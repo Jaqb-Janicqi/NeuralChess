@@ -28,15 +28,15 @@ class bit_array():
 
 class DataLoader(mp.Process):
     def __init__(self, db_path, table_name, min_index, max_index,
-                 num_batches=0, batch_size=0, slice_size=0,
-                 random=True, replace=True, shuffle=True,
+                 num_batches=0, batch_size=0, slice_size=0, buffer_size=8,
+                 random=True, replace=True, shuffle=True, to_tensor=True,
                  specials={}, data_cols=[], label_cols=[]) -> None:
         """DataLoader for sqlite databases in a seperate process. Either batch_size or num_batches must be set.
         If database contains blob data and you want to convert it inside dataloader, 
         you must pass a dictionary with the column names as keys and the conversion functions as values.
         """
 
-        super().__init__()
+        super().__init__(daemon=True)
         self.__db_path = db_path
         self.__table_name = table_name
         self.__batch_size = batch_size
@@ -44,11 +44,11 @@ class DataLoader(mp.Process):
         self.__random = random
         self.__replace = replace
         self.__shuffle = shuffle
+        self.__to_tensor = to_tensor
         self.__min_index = int(min_index)
         self.__max_index = int(max_index)
         self.__slice_size = slice_size
-        self.__batch_buffer = mp.Queue(maxsize=2)
-        self.__last_idx = 0
+        self.__batch_buffer = mp.Queue(maxsize=buffer_size)
         self.__batches_left = 0
         self.__specials = specials
         self.__data_cols = data_cols
@@ -57,16 +57,27 @@ class DataLoader(mp.Process):
         self.__data_col_pos = {}
         self.__label_col_pos = {}
         self.__num_query_cols = None
+        self.__idx_drawn = 0
+        self.__last_idx = 0
+        self.__idx_drawn = 0
+        self.__last_idx_checked = self.__min_index // self.__slice_size
         self.__setup_attrs()
         self.__get_table_structure()
         self.__mask_range = int(
             np.ceil((self.__max_index - self.__min_index) / self.__slice_size))
-        self.__replace_masker = bit_array(self.__mask_range)
-        self.__idx_drawn = 0
-        self.__last_idx_checked = self.__min_index
         self.__restart_latch = mp.Event()
         self.__running = True
         self.__init_completed = False
+
+    def __reinit(self):
+        if self.__num_batches == 0:
+            self.__num_batches = sys.maxsize ** 10
+        self.__idx_drawn = 0
+        if not self.__replace:
+            self.__replace_masker = bit_array(self.__mask_range)
+        self.__last_idx = 0
+        self.__idx_drawn = 0
+        self.__last_idx_checked = self.__min_index
 
     def __get_table_structure(self):
         conn = sqlite3.connect(self.__db_path)
@@ -167,23 +178,16 @@ class DataLoader(mp.Process):
         for key in self.__label_cols:
             labels.append(tmp[self.__label_col_pos[key]])
 
-        # to tensor
-        data = torch.from_numpy(np.array(data)).squeeze().float()
-        labels = torch.from_numpy(np.array(labels)).squeeze().float()
+        if self.__to_tensor:
+            data = torch.from_numpy(np.array(data)).squeeze().float()
+            labels = torch.from_numpy(np.array(labels)).squeeze().float()
         out_batch = (data, labels)
         self.__batch_buffer.put(out_batch)
         return True
 
     def run(self):
         while True:
-            if self.__num_batches == 0:
-                self.__num_batches = sys.maxsize ** 10
-            self.__idx_drawn = 0
-            self.__replace_masker = bit_array(self.__mask_range)
-            self.__last_idx = 0
-            self.__idx_drawn = 0
-            self.__last_idx_checked = self.__min_index
-
+            self.__reinit()
             self.__running = True
             self.__init_completed = True
             for _ in range(self.__num_batches):
@@ -207,7 +211,7 @@ class DataLoader(mp.Process):
     def __no_replace_idx(self):
         # draw random indices until 80% of the indices are drawn
         while (self.__max_index - self.__min_index) // self.__slice_size * 0.8 > self.__idx_drawn:
-            idx = self.__random_idx()
+            idx = self.__random_idx() - self.__min_index // self.__slice_size
             if self.__replace_masker[idx]:
                 continue
             self.__replace_masker[idx] = 1
@@ -247,7 +251,7 @@ class DataLoader(mp.Process):
             self.restart()
         self.__batches_left -= 1
         try:
-            return self.__batch_buffer.get(timeout=500)
+            return self.__batch_buffer.get(timeout=60)
         except:
             raise StopIteration
 
@@ -271,7 +275,6 @@ if __name__ == "__main__":
     conn.close()
     db_checked = 22547088
     x = (db_checked - 1) // 64
-
 
     tmp = DataLoader(
         db_path='C:/sqlite_chess_db/lichess.db',

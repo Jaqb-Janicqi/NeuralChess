@@ -1,18 +1,14 @@
 # pre train
 c_puct_pre: 0 # 0
-num_searches_scaling: 2 # 2
-db_path: 'C:/sqlite_chess_db/chess_positions.db'
-db_size: 45912542
-num_epochs_pre: 20 # 10
-max_batches_per_epoch: 50
+db_path: 'C:/sqlite_chess_db/simple_encode.db'
 
 # training
 num_searches: 1000 #2000
 c_puct: 1 # 1
-model_path: model.pt # model.pt
-cache_size: 4096 # 4096
-batch_size: 256 # 256 # number of games per batch
-db_request_size: 4096 # 65536 # number of positions per request
+model_path: model_19.pt # model.pt
+cache_size: 8192 # 4096
+db_request_size: 8192 # 65536 # number of positions per request
+batch_size: 1024 # 256 # number of games per batch
 multi_threaded: False # True
 num_games: 4 # 400
 num_pit_games: 50
@@ -22,14 +18,6 @@ window_size: 100000
 num_epochs: 2 # 10
 training_split: 0.9 # 0.9
 # optimizer
-lr: 0.02
-target_lr: 0.00001
-lr_decay_step: 0.005
-lr_decay_start_epoch: 5
-weight_decay: 0.000001
-momentum: 0.3
-random_lr: True
-random_lr_start: 70
 
 # saturation
 lr_scaling: 0.1 # 0.1

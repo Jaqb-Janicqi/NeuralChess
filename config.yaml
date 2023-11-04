@@ -29,9 +29,13 @@ multi_threaded: True
 # model parameters # do not change unless you have your own model to load
 # num_blocks: number of residual blocks
 # default: 19
-num_blocks: 19
+# num_blocks: 12
+# num_blocks: 14
+num_blocks: 20
 # num_features: number of channels in each convolutional layer
 # default: 240
-num_features: 240
+# num_features: 144
+# num_features: 208
+num_features: 256
 
-input_features: 16
+input_features: 8

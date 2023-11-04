@@ -12,6 +12,10 @@ from mcts_node import Node
 from db_dataloader import DataLoader
 import stockfish
 from cache_read_priority import Cache
+from mcts_node import Node
+import multiprocessing as mp
+from actionspace import ActionSpace as asp
+import hashlib
 
 
 def get_centipawns(prob):
@@ -68,12 +72,129 @@ def get_position_count(conn):
     return conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
 
 
-def process_game_by_io(conn, line):
+def insert_or_nothing_sha(conn, fen, cp, prob, encoded, sha2, sha3):
+    # Insert or update nothing
+    conn.execute("""
+        INSERT OR IGNORE INTO positions (fen, cp, prob, encoded, sha2, sha3)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (fen, cp, prob, encoded, sha2, sha3))
+
+
+class parser(mp.Process):
+    def __init__(self, shard_path, seek=0):
+        super().__init__(daemon=True)
+        self.shard_path = shard_path
+        self.seek = seek
+        self.queue = mp.Queue(8)
+
+    def run(self):
+        skip_game = False
+        with open(self.shard_path) as file:
+            file.seek(self.seek)
+            for line_num, line in enumerate(file):
+                if line == "\n":
+                    continue
+                if line.startswith("WhiteElo"):
+                    elo = int(line.split('"')[1])
+                    if elo < 2000:
+                        skip_game = True
+                        continue
+                if line.startswith("1."):
+                    if skip_game:
+                        skip_game = False
+                        continue
+                    if '[%eval' in line:
+                        self.queue.put((line_num, line))
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.queue.get(timeout=60)
+
+
+def process_game_by_io(conn, line, actionspace):
     try:
         pgn = io.StringIO(line)
         game = chess.pgn.read_game(pgn)
         if not game:
             return
+        node = Node(1, game.board(), actionspace, None, None)
+        game = game.next()  # skip starting position
+        while True:
+            if not game:
+                break
+            if game.eval() is None:
+                break
+            # get the fen
+            fen = game.board().fen()
+            node.add_child(game.move)
+            children = node.children
+            node = children[actionspace.get_key(game.move)]
+            # get the evaluation
+            centipawns = game.eval()
+            centipawns = centipawns.relative.score(mate_score=12800)
+            # get the probability from the evaluation
+            prob_eval = map_centipawns_to_probability(centipawns)
+            encoded = node.encoded.tobytes()
+            sha2 = hashlib.sha256(encoded).hexdigest()
+            sha3 = hashlib.sha3_256(encoded).hexdigest()
+            # insert or replace the position
+            insert_or_nothing_sha(conn, fen, centipawns,
+                              prob_eval, encoded, sha2, sha3)
+            game = game.next()
+    except Exception as e:
+        print(e)
+        print(line)
+
+
+def parse(shard_path, max_time) -> None:
+    conn = sqlite3.connect('C:/sqlite_chess_db/simple_encode.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS positions (
+            id INTEGER PRIMARY KEY,
+            fen TEXT NOT NULL,
+            cp INTEGER NOT NULL,
+            prob REAL NOT NULL,
+            encoded BLOB NOT NULL,
+            sha2 TEXT NOT NULL,
+            sha3 TEXT NOT NULL,
+            UNIQUE(sha2, sha3)
+        );
+    """)
+    conn.commit()
+    shard_name = os.path.basename(shard_path)
+    seek = 0
+    parser_process = parser(shard_path, seek)
+    parser_process.start()
+    pbar = tqdm.tqdm(desc="Processing shard " +
+                     shard_name + ".", dynamic_ncols=True)
+    actionspace = asp()
+    eval_games_count = 0
+    last_line_num = 0
+    start = time.time()
+    while start + max_time > time.time():
+        try:
+            last_line_num, line = next(parser_process)
+        except:
+            print("Parser process died.")
+            break
+        process_game_by_io(conn, line, actionspace)
+        eval_games_count += 1
+        pbar.set_postfix({"eval games": eval_games_count,
+                         "last line": last_line_num})
+        if eval_games_count % 100 == 0:
+            conn.commit()
+
+
+def process_game_by_io_old(conn, line):
+    try:
+        pgn = io.StringIO(line)
+        game = chess.pgn.read_game(pgn)
+        if not game:
+            return
+        node = Node(1, game.board(), {}, None, None)
         game = game.next()  # skip starting position
         while True:
             if not game:
@@ -98,9 +219,8 @@ def process_game_by_io(conn, line):
         print(line)
 
 
-def shard_parser(shard_path) -> None:
-    start = 84785579
-    conn = sqlite3.connect('C:/sqlite_chess_db/lichess.db')
+def shard_parser_old(shard_path) -> None:
+    conn = sqlite3.connect('C:/sqlite_chess_db/lichess_new.db')
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS positions (
@@ -124,39 +244,13 @@ def shard_parser(shard_path) -> None:
             if line.startswith("1."):
                 # check if the position has an eval
                 if '[%eval' in line:
-                    process_game_by_io(conn, line)
+                    process_game_by_io_old(conn, line)
                     eval_games_count += 1
                     pbar.set_postfix({"eval games": eval_games_count})
                     if eval_games_count % 100 == 0:
                         conn.commit()
         conn.commit()
         conn.close()
-
-
-def check_encoded():
-    conn = sqlite3.connect('C:/sqlite_chess_db/lichess.db')
-    cursor = conn.cursor()
-    max_id = cursor.execute(
-        "SELECT MAX(id) FROM positions").fetchone()[0]
-    min_id = cursor.execute(
-        "SELECT MIN(id) FROM positions").fetchone()[0]
-    replace_query = "INSERT OR REPLACE INTO positions (id, fen, cp, prob, encoded) VALUES (?, ?, ?, ?, ?)"
-    pbar = tqdm.tqdm(dynamic_ncols=True)
-    for i in range(min_id, max_id + 1):
-        x = cursor.execute(
-            "SELECT * FROM positions where id=? limit 1", (i,)).fetchall()
-        for row in x:
-            id, fen, cp, prob, encoded = row
-            board = chess.Board(fen=fen)
-            node = Node(1, board, {}, None, None)
-            node_encoded = node.encoded.tobytes()
-            try:
-                assert encoded == node_encoded
-            except:
-                conn.execute(replace_query, (id, fen, cp, prob, node_encoded))
-                conn.commit()
-                pbar.update(1)
-    conn.commit()
 
 
 def convert_to_numpy(arr):
@@ -212,7 +306,7 @@ def create_new(total_time):
             fen = board.fen()
             if fen in cache:
                 continue
-            if board.fullmove_number > 50:
+            if board.fullmove_number > 80:
                 break
             cache[fen] = True
             stockfish_engine.set_fen_position(fen)
@@ -237,6 +331,6 @@ def create_new(total_time):
 
 
 if __name__ == '__main__':
-    create_new(10 * 60*60)
+    # create_new(10 * 60*60)
     # shard_parser('E:/chess_db/shard_2023-05.pgn')
-    # shard_parser('E:/chess_db/shard_2023-06.pgn')
+    parse('E:/chess_db/shard_2023-09.pgn', 10 * 60*60)
