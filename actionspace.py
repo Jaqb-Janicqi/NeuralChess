@@ -11,7 +11,7 @@ class ActionSpace():
     def __getitem__(self, key) -> tuple:
         return self.__actionspace[key]
 
-    def add(self, obj) -> None:
+    def _add(self, obj) -> None:
         if obj in self.__key_map:
             return
         self.__actionspace[self.__size] = obj
@@ -62,9 +62,8 @@ class ActionSpace():
                     # Clear the board
                     board.clear()
         action_space = sorted(action_space, key=lambda x: x.uci())
-
         for action in action_space:
-            self.add(action)
+            self._add(action)
 
     def __save(self) -> None:
         with open("actionspace.txt", "w") as f:
@@ -74,7 +73,7 @@ class ActionSpace():
     def __load(self) -> None:
         with open("actionspace.txt", "r") as f:
             for line in f:
-                self.add(chess.Move.from_uci(line.strip()))
+                self._add(chess.Move.from_uci(line.strip()))
 
     @property
     def size(self) -> int:
