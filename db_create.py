@@ -5,17 +5,18 @@ import chess.pgn
 import numpy as np
 import os
 import tqdm
-from multiprocessing import Pool
 import time
 import io
+
+import yaml
 from mcts_node import Node
-from db_dataloader import DataLoader
 import stockfish
-from cache_read_priority import Cache
-from mcts_node import Node
+# from mcts_node import Node
+from mcts_node_ext import Node
 import multiprocessing as mp
 from actionspace import ActionSpace as asp
-import hashlib
+import sys
+import base64
 
 
 def get_centipawns(prob):
@@ -26,311 +27,262 @@ def map_centipawns_to_probability(centipawns):
     return math.atan2(centipawns, 111.714640912) / 1.5620688421
 
 
-def insert_or_replace_position(conn, fen, cp, prob, encoded):
-    # Insert or replace the position, keeping the one with the closest 'cp' to 0
-    conn.execute("""
-        INSERT OR REPLACE INTO positions (fen, cp, prob, encoded)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(fen) DO UPDATE
-        SET 
-            cp = CASE
-                WHEN excluded.cp >= 0 THEN
-                    CASE
-                        WHEN positions.cp < 0 THEN excluded.cp
-                        ELSE MIN(positions.cp, excluded.cp)
-                    END
-                ELSE
-                    CASE
-                        WHEN positions.cp >= 0 THEN excluded.cp
-                        ELSE MAX(positions.cp, excluded.cp)
-                    END
-            END,
-            prob = CASE
-                WHEN ABS(positions.prob) < ABS(excluded.prob) THEN positions.prob
-                ELSE excluded.prob
-            END
-    """, (fen, cp, prob, encoded))
-
-
-def insert_or_abort(conn, fen, cp, prob, encoded):
-    # Insert or replace the position, keeping the one with the closest 'cp' to 0
-    conn.execute("""
-        INSERT OR ABORT INTO positions (fen, cp, prob, encoded)
-        VALUES (?, ?, ?, ?)
-    """, (fen, cp, prob, encoded))
-
-
-def insert_or_nothing(conn, fen, cp, prob, encoded):
-    # Insert or update nothing
-    conn.execute("""
-        INSERT OR IGNORE INTO positions (fen, cp, prob, encoded)
-        VALUES (?, ?, ?, ?)
-    """, (fen, cp, prob, encoded))
-
-
 def get_position_count(conn):
     return conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
 
 
-def insert_or_nothing_sha(conn, fen, cp, prob, encoded, sha2, sha3):
-    # Insert or update nothing
+def get_position(conn, encoded):
+    return conn.execute("SELECT * FROM positions WHERE encoded = ?", (encoded,)).fetchone()
+
+
+def insert_or_replace_position(conn, encoded, fen, cp, policy, value, sample_count, legal_moves):
+    # Insert or replace the position
     conn.execute("""
-        INSERT OR IGNORE INTO positions (fen, cp, prob, encoded, sha2, sha3)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (fen, cp, prob, encoded, sha2, sha3))
+        INSERT OR REPLACE INTO positions (encoded, fen, cp, policy, value, sample_count, legal_moves)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO UPDATE SET
+            fen = excluded.fen,
+            cp = excluded.cp,
+            policy = excluded.policy,
+            value = excluded.value,
+            sample_count = excluded.sample_count
+    """, (encoded, fen, cp, policy, value, sample_count, legal_moves))
 
 
-class parser(mp.Process):
-    def __init__(self, shard_path, seek=0):
-        super().__init__(daemon=True)
-        self.shard_path = shard_path
-        self.seek = seek
-        self.queue = mp.Queue(8)
-
-    def run(self):
-        skip_game = False
-        with open(self.shard_path) as file:
-            file.seek(self.seek)
-            for line_num, line in enumerate(file):
-                if line == "\n":
-                    continue
-                if line.startswith("WhiteElo"):
-                    elo = int(line.split('"')[1])
-                    if elo < 2000:
-                        skip_game = True
-                        continue
-                if line.startswith("1."):
-                    if skip_game:
-                        skip_game = False
-                        continue
-                    if '[%eval' in line:
-                        self.queue.put((line_num, line))
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return self.queue.get(timeout=60)
-
-
-def process_game_by_io(conn, line, actionspace):
+def process_game(line, actionspace, db_dict, verbose=False):
     try:
         pgn = io.StringIO(line)
         game = chess.pgn.read_game(pgn)
         if not game:
             return
+        if game.next() is None:
+            return
         node = Node(1, game.board(), actionspace, None, None)
-        game = game.next()  # skip starting position
+        # game = game.next()  # skip starting position
         while True:
+            move_made = game.next().move
+            if game.board().turn == chess.WHITE:
+                fen = game.board().fen()
+            else:
+                # flip board such that the king is always on the right
+                fen = game.board().mirror().fen()
+                move_made = chess.Move(
+                    chess.square_mirror(move_made.from_square),
+                    chess.square_mirror(move_made.to_square),
+                    move_made.promotion
+                )
+
+            cp = game.eval()
+            if cp is None:
+                cp = 0
+            else:
+                cp = cp.pov(chess.WHITE)
+                cp = cp.score(mate_score=12800)
+            value = map_centipawns_to_probability(cp)
+            encoded = node.encoded.astype(np.int8).tobytes()
+
+            # insert into db_dict
+            if encoded in db_dict:
+                db_row = db_dict[encoded]
+                db_row[2][actionspace.get_key(move_made)] += 1
+                db_row[4] += 1
+                if abs(db_row[1]) > abs(cp):
+                    db_row[1] = cp
+                    db_row[3] = value
+            else:
+                policy = np.zeros(actionspace.size, dtype=np.uint32)
+                policy[actionspace.get_key(move_made)] += 1
+                db_dict[encoded] = [fen, cp, policy, value, 1, game.board().legal_moves.count()]
+
+            # move to next position
+            game = game.next()
             if not game:
-                break
-            if game.eval() is None:
-                break
-            # get the fen
-            fen = game.board().fen()
+                return
+            if not game.eval():
+                return
+            # update the tree
             node.add_child(game.move)
             children = node.children
             node = children[actionspace.get_key(game.move)]
-            # get the evaluation
-            centipawns = game.eval()
-            centipawns = centipawns.relative.score(mate_score=12800)
-            # get the probability from the evaluation
-            prob_eval = map_centipawns_to_probability(centipawns)
-            encoded = node.encoded.tobytes()
-            sha2 = hashlib.sha256(encoded).hexdigest()
-            sha3 = hashlib.sha3_256(encoded).hexdigest()
-            # insert or replace the position
-            insert_or_nothing_sha(conn, fen, centipawns,
-                              prob_eval, encoded, sha2, sha3)
-            game = game.next()
     except Exception as e:
-        print(e)
-        print(line)
+        if verbose:
+            print(e)
+            print(line)
 
 
-def parse(shard_path, max_time) -> None:
-    conn = sqlite3.connect('C:/sqlite_chess_db/simple_encode.db')
+def parse_worker(shard_path, queue):
+    db_dict = {}
+    actionspace = asp()
+    skip_game = False
+    with open(shard_path) as file:
+        for line in file:
+            if line == "\n":
+                continue
+            if line.startswith("WhiteElo"):
+                elo = int(line.split('"')[1])
+                if elo < 2200:
+                    skip_game = True
+                    continue
+            if line.startswith("BlackElo"):
+                elo = int(line.split('"')[1])
+                if elo < 2200:
+                    skip_game = True
+                    continue
+            if line.startswith("1."):
+                if skip_game:
+                    skip_game = False
+                    continue
+                if '[%eval' in line:
+                    process_game(line, actionspace, db_dict)
+    for encoded, (fen, cp, policy, value, sample_count, legal_moves) in db_dict.items():
+        queue.put((encoded, fen, cp, policy, value, sample_count, legal_moves))
+
+
+def encode_a85(byte_rep):
+    return base64.a85encode(byte_rep).decode()
+
+
+def decode_a85(byte_rep):
+    return np.frombuffer(base64.a85decode(byte_rep), dtype=np.uint32)
+
+
+def prune_database(conn):
+    # remove all rows with sample_count < 2
+    conn.execute("DELETE FROM positions WHERE sample_count < 2")
+
+
+def should_prune(db_path):
+    # prune if db is larger than 1TB
+    if os.path.getsize(db_path) > 1e12:
+        return True
+    return False
+
+
+def db_writer(queue, db_path, verbose=False):
+    db_dict = {}
+    conn = sqlite3.connect(db_path)
+    row_count = 0
+    exit_flag = False
+    while not exit_flag:
+        # combine rows from workers in memory
+        while len(db_dict) < 100000:
+            try:
+                q_item = queue.get()
+                if q_item is None:
+                    exit_flag = True
+                    break
+                row_count += 1
+                encoded, fen, cp, policy, value, sample_count, legal_moves = q_item
+                if encoded in db_dict:
+                    db_row = db_dict[encoded]
+                    # update distribution of current position with move played
+                    db_row[2] += policy
+                    db_row[4] += sample_count
+                    if abs(db_row[1]) > abs(cp):
+                        db_row[1] = cp
+                        db_row[3] = value
+                else:
+                    db_dict[encoded] = [fen, cp, policy, value, sample_count, legal_moves]
+            except Exception as e:
+                if verbose:
+                    print(e)
+                    print(q_item)
+
+        # write to db
+        for encoded, (fen, cp, policy, value, sample_count, legal_moves) in db_dict.items():
+            encoded = encode_a85(encoded)
+            row = get_position(conn, encoded)
+            if row:
+                cp = min(row[2], cp)
+                value = min(row[4], value)
+                # prevent overflow
+                if row[5] + sample_count < 2**32 - 1:
+                    policy = decode_a85(row[3]) + policy
+                    policy = encode_a85(policy)
+                    sample_count = row[5] + sample_count
+                else:
+                    sample_count = 2**32 - 1
+                    policy = row[3]
+            else:
+                policy = encode_a85(policy)
+            insert_or_replace_position(
+                conn, encoded, fen, cp, policy, value, sample_count, legal_moves)
+        db_dict = {}
+        conn.commit()
+        if should_prune(db_path):
+            prune_database(conn, db_path)
+    conn.close()
+
+
+def parse(shard_path) -> None:
+    tic = time.time()
+    db_path = 'C:/sqlite_chess_db/lichess2200.db'
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS positions (
-            id INTEGER PRIMARY KEY,
+            encoded BLOB PRIMARY KEY NOT NULL UNIQUE,
             fen TEXT NOT NULL,
             cp INTEGER NOT NULL,
-            prob REAL NOT NULL,
-            encoded BLOB NOT NULL,
-            sha2 TEXT NOT NULL,
-            sha3 TEXT NOT NULL,
-            UNIQUE(sha2, sha3)
+            policy BLOB NOT NULL,
+            value REAL NOT NULL,
+            sample_count INTEGER NOT NULL,
+            legal_moves INTEGER NOT NULL
         );
     """)
     conn.commit()
-    shard_name = os.path.basename(shard_path)
-    seek = 0
-    parser_process = parser(shard_path, seek)
-    parser_process.start()
-    pbar = tqdm.tqdm(desc="Processing shard " +
-                     shard_name + ".", dynamic_ncols=True)
-    actionspace = asp()
-    eval_games_count = 0
-    last_line_num = 0
-    start = time.time()
-    while start + max_time > time.time():
-        try:
-            last_line_num, line = next(parser_process)
-        except:
-            print("Parser process died.")
-            break
-        process_game_by_io(conn, line, actionspace)
-        eval_games_count += 1
-        pbar.set_postfix({"eval games": eval_games_count,
-                         "last line": last_line_num})
-        if eval_games_count % 100 == 0:
-            conn.commit()
-
-
-def process_game_by_io_old(conn, line):
-    try:
-        pgn = io.StringIO(line)
-        game = chess.pgn.read_game(pgn)
-        if not game:
-            return
-        node = Node(1, game.board(), {}, None, None)
-        game = game.next()  # skip starting position
-        while True:
-            if not game:
-                break
-            if game.eval() is None:
-                game = game.next()
-                continue
-            # get the fen
-            fen = game.board().fen()
-            node = Node(1, game.board(), {}, None, None)
-            # get the evaluation
-            centipawns = game.eval()
-            centipawns = centipawns.relative.score(mate_score=12800)
-            # get the probability from the evaluation
-            prob_eval = map_centipawns_to_probability(centipawns)
-            # insert or replace the position
-            insert_or_nothing(conn, fen, centipawns,
-                              prob_eval, node.encoded.tobytes())
-            game = game.next()
-    except Exception as e:
-        print(e)
-        print(line)
-
-
-def shard_parser_old(shard_path) -> None:
-    conn = sqlite3.connect('C:/sqlite_chess_db/lichess_new.db')
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS positions (
-            id INTEGER PRIMARY KEY,
-            fen TEXT NOT NULL UNIQUE,
-            cp INTEGER NOT NULL,
-            prob REAL NOT NULL,
-            encoded BLOB NOT NULL
-        );
-    """)
-    conn.commit()
-
-    shard_name = os.path.basename(shard_path)
-    pbar = tqdm.tqdm(desc="Processing shard " +
-                     shard_name + ".", dynamic_ncols=True)
-    eval_games_count = 0
-    with open(shard_path) as file:
-        # select until "1." is found
-        for line in file:
-            pbar.update(1)
-            if line.startswith("1."):
-                # check if the position has an eval
-                if '[%eval' in line:
-                    process_game_by_io_old(conn, line)
-                    eval_games_count += 1
-                    pbar.set_postfix({"eval games": eval_games_count})
-                    if eval_games_count % 100 == 0:
-                        conn.commit()
-        conn.commit()
-        conn.close()
+    conn.close()
+    files = os.listdir(shard_path)
+    files = files[:1500]    #process 1500 files
+    queue = mp.Manager().Queue(10000)
+    db_worker = mp.Process(target=db_writer, args=(queue, db_path))
+    db_worker.start()
+    p_size = mp.cpu_count()
+    # p_size = 1
+    with mp.Pool(processes=p_size) as pool:
+        for file in files:
+            if file.endswith(".pgn"):
+                pool.apply_async(parse_worker, args=(
+                    shard_path + file, queue))
+        pool.close()
+        pool.join()
+    queue.put(None)
+    db_worker.join()
+    toc = time.time()
+    print(f"Processed {len(files)} files in {toc - tic} seconds")
 
 
 def convert_to_numpy(arr):
     return np.frombuffer(arr, dtype=np.float32).reshape(16, 8, 8)
 
 
-def create_new(total_time):
-    start_time = time.time()
-    conn = sqlite3.connect('C:/sqlite_chess_db/stockfish.db')
+def display():
+    db_path = 'C:/sqlite_chess_db/lichess2200.db'
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    stockfish_engine = stockfish.Stockfish(
-        path="D:/stockryba/stockfish-windows-x86-64-avx2.exe",
-        depth=20,
-        parameters={
-            'Threads': 4,
-        }
-    )
-    print(stockfish_engine.get_parameters())
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS positions (
-            id INTEGER PRIMARY KEY,
-            fen TEXT NOT NULL,
-            cp INTEGER NOT NULL,
-            prob REAL NOT NULL,
-            encoded BLOB NOT NULL
-        )
-    """)
-    conn.commit()
-    pos_count = 0
-    pbar = tqdm.tqdm()
-    # cache = Cache(6000)
-    cache = {}
-
-    db_size = conn.execute(
-        "SELECT COUNT(*) FROM positions").fetchone()[0]
-
-    # get all the positions one by one
-    for i in range(1, db_size + 1):
-        x = cursor.execute(
-            "SELECT * FROM positions where id=? limit 1", (i,)).fetchall()
-        for row in x:
-            id, fen, cp, prob, encoded = row
-            cache[fen] = True
-            pos_count += 1
-            pbar.update(1)
-
-    while start_time + total_time > time.time():
-        board = chess.Board()
-        node = Node(1, board, {}, None, None)
-
-        while not board.is_game_over(claim_draw=True):
-            board.push(np.random.choice(list(board.legal_moves)))
-            fen = board.fen()
-            if fen in cache:
-                continue
-            if board.fullmove_number > 80:
-                break
-            cache[fen] = True
-            stockfish_engine.set_fen_position(fen)
-            cp = stockfish_engine.get_evaluation()
-            if cp["type"] == "mate":
-                if cp["value"] == 0:
-                    cp = 12800 * np.sign(cp["value"])
-                else:
-                    cp = 12800 / ((abs(cp["value"]) + 1)
-                                  * np.sign(cp["value"]))
-            else:
-                cp = cp["value"]
-            prob = map_centipawns_to_probability(cp)
-            encode_str = node.encoded.tobytes()
-            insert_or_nothing(conn, fen, cp, prob, encode_str)
-            pos_count += 1
-            pbar.update(1)
-            if pos_count % 100 == 0:
-                conn.commit()
-    conn.commit()
+    cursor.execute(
+        "SELECT * FROM positions where sample_count > legal_moves order by RANDOM() LIMIT 1000")
+    rows = cursor.fetchall()
+    print(len(rows))
+    for row in rows:
+        fen = row[1]
+        print(fen)
+        policy = decode_a85(row[3])
+        played = np.argwhere(policy > 0)
+        actionspace = asp()
+        moves = []
+        for move in played:
+            moves.append(actionspace[move[0]])
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        # plot frequency of moves
+        sns.set_theme(style="whitegrid")
+        sns.set(rc={'figure.figsize': (10, 5)})
+        ax = sns.barplot(x=moves, y=policy[played].flatten())
+        plt.show(block=True)
     conn.close()
 
 
 if __name__ == '__main__':
-    # create_new(10 * 60*60)
-    # shard_parser('E:/chess_db/shard_2023-05.pgn')
-    parse('E:/chess_db/shard_2023-09.pgn', 10 * 60*60)
+    # display()
+    parse('E:/lichess_shards/lichess_db_standard_rated_2023-9/')
