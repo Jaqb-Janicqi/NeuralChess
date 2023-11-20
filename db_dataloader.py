@@ -30,6 +30,7 @@ class DataLoader(mp.Process):
     def __init__(self, db_path, table_name, min_index, max_index,
                  num_batches=0, batch_size=0, slice_size=0, buffer_size=8,
                  random=True, replace=True, shuffle=True, to_tensor=True,
+                 use_offsets=False,
                  specials={}, data_cols=[], label_cols=[]) -> None:
         """DataLoader for sqlite databases in a seperate process. Either batch_size or num_batches must be set.
         If database contains blob data and you want to convert it inside dataloader, 
@@ -45,6 +46,7 @@ class DataLoader(mp.Process):
         self.__replace = replace
         self.__shuffle = shuffle
         self.__to_tensor = to_tensor
+        self.__use_offsets = use_offsets
         self.__min_index = int(min_index)
         self.__max_index = int(max_index)
         self.__slice_size = slice_size
@@ -122,16 +124,24 @@ class DataLoader(mp.Process):
         conn = sqlite3.connect(self.__db_path)
         cursor = conn.cursor()
         end_idx = idx + self.__slice_size
-        db_slice = cursor.execute(
-            "SELECT * FROM {} WHERE id >= {} AND id < {}".format(self.__table_name, idx, end_idx)).fetchall()
+        if self.__use_offsets:
+            db_slice = cursor.execute(
+                "SELECT * FROM {} LIMIT {} OFFSET {}".format(self.__table_name, self.__slice_size, idx)).fetchall()
+        else:
+            db_slice = cursor.execute(
+                "SELECT * FROM {} WHERE id >= {} AND id < {}".format(self.__table_name, idx, end_idx)).fetchall()
         conn.close()
         return db_slice
 
     def __get_single(self, idx):
         conn = sqlite3.connect(self.__db_path)
         cursor = conn.cursor()
-        db_slice = cursor.execute(
-            "SELECT * FROM {} WHERE id = {}".format(self.__table_name, idx)).fetchall()
+        if self.__use_offsets:
+            db_slice = cursor.execute(
+                "SELECT * FROM {} LIMIT 1 OFFSET {}".format(self.__table_name, idx)).fetchall()
+        else:
+            db_slice = cursor.execute(
+                "SELECT * FROM {} WHERE id = {}".format(self.__table_name, idx)).fetchall()
         conn.close()
         return db_slice
 
