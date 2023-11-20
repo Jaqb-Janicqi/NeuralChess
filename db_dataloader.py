@@ -31,10 +31,11 @@ class DataLoader(mp.Process):
                  num_batches=0, batch_size=0, slice_size=0, buffer_size=8,
                  random=True, replace=True, shuffle=True, to_tensor=True,
                  use_offsets=False,
-                 specials={}, data_cols=[], label_cols=[]) -> None:
+                 specials={}, output_columns=[]) -> None:
         """DataLoader for sqlite databases in a seperate process. Either batch_size or num_batches must be set.
         If database contains blob data and you want to convert it inside dataloader, 
         you must pass a dictionary with the column names as keys and the conversion functions as values.
+        Output columns are returned in the same order they are declared in the list.
         """
 
         super().__init__(daemon=True)
@@ -53,8 +54,7 @@ class DataLoader(mp.Process):
         self.__batch_buffer = mp.Queue(maxsize=buffer_size)
         self.__batches_left = 0
         self.__specials = specials
-        self.__data_cols = data_cols
-        self.__label_cols = label_cols
+        self.__output_columns = output_columns
         self.__specials_query_pos = {}
         self.__data_col_pos = {}
         self.__label_col_pos = {}
@@ -91,10 +91,8 @@ class DataLoader(mp.Process):
         for row in table_structure:
             if row[1] in self.__specials:
                 self.__specials_query_pos[row[1]] = row[0]
-            if row[1] in self.__data_cols:
+            if row[1] in self.__output_columns:
                 self.__data_col_pos[row[1]] = row[0]
-            if row[1] in self.__label_cols:
-                self.__label_col_pos[row[1]] = row[0]
 
     def __setup_attrs(self):
         if self.__max_index == 0:
@@ -180,19 +178,18 @@ class DataLoader(mp.Process):
             for i, col in enumerate(row):
                 tmp[i].append(col)
 
-        # filter out data and label columns
-        data = []
-        labels = []
-        for key in self.__data_cols:
-            data.append(tmp[self.__data_col_pos[key]])
-        for key in self.__label_cols:
-            labels.append(tmp[self.__label_col_pos[key]])
-
+        batch = []
         if self.__to_tensor:
-            data = torch.from_numpy(np.array(data)).squeeze().float()
-            labels = torch.from_numpy(np.array(labels)).squeeze().float()
-        out_batch = (data, labels)
-        self.__batch_buffer.put(out_batch)
+            for key in self.__output_columns:
+                column = tmp[self.__data_col_pos[key]]
+                column = torch.from_numpy(np.array(column)).squeeze().float()
+                batch.append(column)
+        else:
+            for key in self.__output_columns:
+                column = tmp[self.__data_col_pos[key]]
+                batch.append(column)
+
+        self.__batch_buffer.put(batch)
         return True
 
     def run(self):
