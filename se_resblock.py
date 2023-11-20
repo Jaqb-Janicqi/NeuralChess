@@ -1,7 +1,5 @@
-import torch
 import torch.nn as nn
 from torchvision.ops import SqueezeExcitation
-torch.manual_seed(0)
 
 
 class SeResBlock(nn.Module):
@@ -13,6 +11,8 @@ class SeResBlock(nn.Module):
         self.bnorm2 = nn.BatchNorm2d(num_features)
         self.relu = nn.ReLU(inplace=True)
         self.se = SqueezeExcitation(num_features, reduction)
+        nn.init.xavier_uniform_(self.conv1.weight)
+        nn.init.xavier_uniform_(self.conv2.weight)
 
     def forward(self, x):
         residual = x

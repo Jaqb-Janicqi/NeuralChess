@@ -3,7 +3,6 @@ from se_resblock import SeResBlock
 from resblock import ResBlock
 import torch
 import torch.nn as nn
-torch.manual_seed(0)
 
 
 class ResNet(nn.Module):
@@ -26,14 +25,14 @@ class ResNet(nn.Module):
             num_features, input_features)
         self.policy = nn.Sequential(
             nn.Conv2d(num_features, num_features, 1),
-            nn.Conv2d(num_features, 128, 1),
+            nn.Conv2d(num_features, 80, 1),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(p_size, policy_size),
             nn.Softmax(dim=1)
         )
         self.value = nn.Sequential(
-            nn.Conv2d(num_features, 64, 1),
+            nn.Conv2d(num_features, 80, 1),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(v_size, 256),
@@ -42,6 +41,12 @@ class ResNet(nn.Module):
             nn.Tanh()
         )
         self.__disable_policy = False
+        nn.init.xavier_uniform_(self.start_block[0].weight)
+        nn.init.xavier_uniform_(self.policy[0].weight)
+        nn.init.xavier_uniform_(self.policy[1].weight)
+        nn.init.xavier_uniform_(self.value[0].weight)
+        nn.init.xavier_uniform_(self.value[3].weight)
+        nn.init.xavier_uniform_(self.value[5].weight)
 
     def forward(self, x):
         x = self.start_block(x)
@@ -71,11 +76,11 @@ class ResNet(nn.Module):
         blocks_copy = deepcopy(self.blocks).float()
         p_seqence = nn.Sequential(
             nn.Conv2d(num_features, num_features, 1),
-            nn.Conv2d(num_features, 128, 1),
+            nn.Conv2d(num_features, 80, 1),
             nn.Flatten(),
         )
         v_seqence = nn.Sequential(
-            nn.Conv2d(num_features, 64, 1),
+            nn.Conv2d(num_features, 80, 1),
             nn.Flatten(),
         )
 
