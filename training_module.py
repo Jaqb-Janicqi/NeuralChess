@@ -52,14 +52,15 @@ class TrainingModule:
         loss = F.cross_entropy(y_hat, y)
         del x, y, y_hat
         return loss
-    
+
     def convert_batch(self, batch):
         fens, labels = batch
         encoded = []
         for fen in fens[0]:
             state = chess.Board(fen)
             node = Node(1, state, {})
-            encoded.append(node.encoded_dense)
+            encoded.append(node.encoded)
+        new_labels = []
         encoded = np.array(encoded)
         labels = np.array(labels[0])
         encoded = torch.tensor(encoded).float().to(self._device)
@@ -67,15 +68,20 @@ class TrainingModule:
         batch = (encoded, labels)
         return batch
 
-    def fit(self, train_loader, val_loader=None, max_epochs=None, early_stopping=0, resume_path=None, plot=True, path=None):
+    def fit(self, train_loader, val_loader=None, max_epochs=None,
+            early_stopping=0, path=None, resume_model_path=None, log_plot=False,
+            resume=True, resume_optimizer=True, reduece_on_plateau=True):
         self._dataloaders['train_loader'] = train_loader
         if val_loader is not None:
             self._dataloaders['val_loader'] = val_loader
         if len(self._optimizers) == 0:
             self.configure_optimizers()
         start_epoch = 0
-        if resume_path is not None:
-            start_epoch, _ = self.load(resume_path)
+        if resume:
+            if resume_model_path is not None:
+                start_epoch = self.load(resume_model_path, resume_optimizer)
+            else:
+                start_epoch = self.load_best(path, resume_optimizer)
         if max_epochs is None:
             max_epochs = sys.maxsize ** 10
 
@@ -86,11 +92,14 @@ class TrainingModule:
 
             self._model.train()
             for batch in train_loader:
+                # batch = self.convert_batch(batch)
                 loss = self.training_step(batch)
                 self.log('train_loss', loss.item())
                 self._optimizers['optimizer'].zero_grad()
                 loss.backward()
                 del loss
+
+                torch.nn.utils.clip_grad_norm_(self._model.parameters(), 1)
                 for func in self._step_list:
                     func.step()
 
@@ -113,20 +122,21 @@ class TrainingModule:
                          sum(self._log_dict['train_loss']) / len(self._log_dict['train_loss']))
             else:
                 self._model.eval()
-                val_loss = 0
                 with torch.no_grad():
                     for batch in val_loader:
-                        val_loss += self.test_step(batch).item()
-                self.log('val_loss', val_loss / len(val_loader))
+                        # batch = self.convert_batch(batch)
+                        val_loss = self.test_step(batch).item()
+                        self.log('val_loss', val_loss)
                 self.log('avg_loss',
                          sum(self._log_dict['val_loss']) / len(self._log_dict['val_loss']))
 
             if early_stopping > 0:
                 if len(self._log_dict['avg_loss']) > early_stopping:
-                    if self._log_dict['avg_loss'][-1] > np.all(self._log_dict['avg_loss'][-early_stopping:-2]):
+                    if self._log_dict['avg_loss'][-1] > np.all(self._log_dict['avg_loss'][-(early_stopping+1):-2]):
                         break
 
-                if len(self._log_dict['avg_loss'] > 1):
+            if reduece_on_plateau:
+                if len(self._log_dict['avg_loss']) > 1:
                     if self._log_dict['avg_loss'][-1] > self._log_dict['avg_loss'][-2]:
                         self.reduce_scheduler_lr()
 
@@ -138,27 +148,23 @@ class TrainingModule:
             self.on_epoch_end(self._log_dict)
             pbar.close()
 
-        if plot:
+            # load best model
+            if path is not None:
+                self.load_best(path, resume_optimizer)
+
+            # save training loss
             smoothing_window = 51
             loss = savgol_filter(
-                self.log['train_loss'], smoothing_window, 3, mode='nearest')
+                self._log_dict['train_loss'], smoothing_window, 3, mode='nearest')
             fig, ax = plt.subplots()
             ax.plot(loss)
             ax.set_xlabel('Batch')
-            ax.set_ylabel('Loss')
+            # ax.set_ylabel('Loss')
+            if log_plot:
+                ax.set_yscale('log')
             ax.set_title('Training Loss')
-            plt.savefig('training_loss.pdf')
-
-            if val_loader is not None:
-                loss2 = savgol_filter(
-                    self.log['val_loss'], smoothing_window, 3, mode='nearest')
-                fig2, ax2 = plt.subplots()
-                ax2.plot(loss2)
-                ax2.set_xlabel('Batch')
-                ax2.set_ylabel('Loss')
-                ax2.set_title('Validation Loss')
-                plt.savefig('validation_loss.pdf')
-            plt.show(block=True)
+            plt.savefig(f'{path}training_loss.pdf')
+            plt.close()
 
     def save(self, path, epoch, loss):
         # save model
@@ -166,17 +172,30 @@ class TrainingModule:
             'epoch': epoch,
             'model_state_dict': self._model.state_dict(),
             'optimizer_state_dict': self._optimizers['optimizer'].state_dict(),
-            'loss': loss,
+            'log_dict': self._log_dict,
         }, f'{path}model_{epoch}_{loss}.pth')
 
-    def load(self, path):
+    def load(self, path, resume_optimizer):
         checkpoint = torch.load(path)
         self._model.load_state_dict(checkpoint['model_state_dict'])
-        self._optimizers['optimizer'].load_state_dict(
-            checkpoint['optimizer_state_dict'])
+        if resume_optimizer:
+            self._optimizers['optimizer'].load_state_dict(
+                checkpoint['optimizer_state_dict'])
+        self._log_dict = checkpoint['log_dict']
         epoch = checkpoint['epoch']
-        loss = checkpoint['loss']
-        return epoch, loss
+        return epoch
+
+    def load_best(self, path, resume_optimizer):
+        best_loss = sys.maxsize
+        best_path = ''
+        for file in os.listdir(path):
+            if file.endswith('.pth'):
+                split_filename = file.split('_')
+                loss = float(split_filename[-1].strip('.pth'))
+                if loss < best_loss:
+                    best_loss = loss
+                    best_path = f'{path}{file}'
+        return self.load(best_path, resume_optimizer)
 
     def configure_optimizers(self):
         self._step_list = []
@@ -198,7 +217,9 @@ class TrainingModule:
             min_lr = scheduler.min_lr
             scheduler.max_lr = max_lr * factor
             scheduler.min_lr = min_lr * factor
-            
+        for optimizer in self._optimizers.values():
+            for param_group in optimizer.param_groups:
+                param_group['lr'] *= factor
 
     def lr_finder(self, train_loader, start_lr, end_lr, exp_step_size, smoothing_window=51):
         self._dataloaders['train_loader'] = train_loader
@@ -371,21 +392,23 @@ class TrainingModule:
 
         # generate parameters
         params = {
-            'lr': trial.suggest_float('lr', 1e-6, 1, log=True),
-            # 'lambd': trial.suggest_float('lambd', 1e-4, 1, log=True),
-            # 'alpha': trial.suggest_float('alpha', 0.7, 1, log=False),
-            'weight_decay': trial.suggest_float('weight_decay', 1e-6, 1, log=True),
-            'betas': trial.suggest_categorical('betas', [str((0.85, 0.95)), str((0.9, 0.99))])
+            'lr': trial.suggest_float('lr', 1e-8, 1, log=True),
+            'lambd': trial.suggest_float('lambd', 1e-8, 1, log=True),
+            'alpha': trial.suggest_float('alpha', 0, 1, log=False),
+            'weight_decay': trial.suggest_float('weight_decay', 1e-8, 1, log=True),
+            # 'betas': trial.suggest_categorical('betas', [str((0.85, 0.95)), str((0.9, 0.99))])
         }
-        tmp = params['betas'].strip('()').split(',')
-        params['betas'] = (float(tmp[0]), float(tmp[1]))
+        # tmp = params['betas'].strip('()').split(',')
+        # params['betas'] = (float(tmp[0]), float(tmp[1]))
         for key in params.keys():
             self._optimizers['optimizer'].param_groups[0][key] = params[key]
+
+        total_steps = len(self._dataloaders['train_loader'])
 
         train_bar = tqdm(
             desc=f'Optuna Trial',
             dynamic_ncols=True,
-            total=len(self._dataloaders['train_loader']),
+            total=total_steps,
             leave=False
         )
 
@@ -401,13 +424,14 @@ class TrainingModule:
             for func in self._step_list:
                 func.step()
 
-            if len(running_loss) > 1/(len(batch[0])//16)*6400:  # average over 100k samples
+            # average over 100k samples
+            if len(running_loss) > 1/(len(batch[0])//16)*6400:
                 running_loss.pop(0)
             avg_loss = sum(running_loss) / len(running_loss)
             train_bar.set_postfix({'loss': loss, 'average loss': avg_loss})
             trial.report(avg_loss, step)
 
-            if trial.should_prune() or avg_loss > 1:
+            if trial.should_prune():
                 train_bar.close()
                 self.on_epoch_end(self._log_dict)
                 raise optuna.exceptions.TrialPruned()
