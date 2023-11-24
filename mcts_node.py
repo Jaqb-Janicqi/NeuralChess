@@ -148,12 +148,13 @@ class Node():
 
     @property
     def encoded(self) -> np.ndarray:
-        """Returns a 8x8x8 stack of matrices, representing the current state from white perspective."""
+        """Returns a 9x8x8 stack of matrices, representing the current state from white perspective."""
 
-        # get board from white perspective
-        board = self.__state if self.__state.turn else self.__state.mirror()
+        white = self.__state.occupied_co[chess.WHITE]
+        black = self.__state.occupied_co[chess.BLACK]
+        p_color = 1 if self.__state.turn else -1
         # get board attributes
-        castling_bb = np.uint64(board.castling_rights)
+        castling_bb = np.uint64(self.__state.castling_rights)
         ep_square_bb = self.__state.ep_square
         if not ep_square_bb:
             ep_square_bb = 0
@@ -166,13 +167,15 @@ class Node():
             self.__state.knights,
             self.__state.pawns
         ]
-        # convert bitboards to matrices
         matrices = []
+        # create color matrix
+        color_matrix = np.full((8, 8), p_color, dtype=np.float32)
+        matrices.append(color_matrix)
         # convert pieces
         for piece in range(6):
-            white_pieces = piece_bbs[piece] & board.occupied_co[chess.WHITE]
+            white_pieces = piece_bbs[piece] & white
             white_pieces = bb_to_matrix(np.uint64(white_pieces))
-            black_pieces = piece_bbs[piece] & board.occupied_co[chess.BLACK]
+            black_pieces = piece_bbs[piece] & black
             black_pieces = bb_to_matrix(np.uint64(black_pieces))
             black_pieces *= -1
             matrices.append(white_pieces + black_pieces)
@@ -197,3 +200,7 @@ class Node():
     @property
     def action(self):
         return self.__action
+    
+    @property
+    def turn(self):
+        return self.__state.turn
