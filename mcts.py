@@ -23,15 +23,6 @@ class MCTS():
 
         self.__root = Node(self.__c_puct, state, self.__action_space)
 
-    def calculate_legal_policy(self, node: Node, policy: np.ndarray) -> np.ndarray:
-        """Calculate the legal policy of a given node"""
-
-        legal_ids = np.array(
-            [self.__action_space.get_key(move) for move in node.legal_moves])
-        legal_policy = np.zeros(self.__action_space.size)
-        legal_policy[legal_ids] = policy[legal_ids]
-        return legal_policy
-
     def calculate_policy_value(self, node: Node) -> np.ndarray:
         """Calculate the policy and value of a given node"""
 
@@ -43,8 +34,7 @@ class MCTS():
                     self.__model.get_unbatched_tensor_state(node.encoded))
             policy = self.__model.get_policy(policy)
             value = self.__model.get_value(value)
-        legal_policy = self.calculate_legal_policy(node, policy)
-        return legal_policy, value
+        return policy, value
 
     def search_step(self, max_depth: int) -> None:
         """Performs one iteration of the MCTS algorithm"""
@@ -103,8 +93,9 @@ class MCTS():
         """Restricts the root node to the given actions"""
 
         # remove all nodes that are not in the given actions
+        allowed_actions = [self.__action_space.get_key(
+            action) for action in allowed_actions]
         for action in self.__root.children:
-            action = self.__action_space.get_key(action)
             if action not in allowed_actions:
                 self.__root.child_value[action] = -np.inf
 
