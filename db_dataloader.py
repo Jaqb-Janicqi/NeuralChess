@@ -170,7 +170,7 @@ class DataLoader(mp.Process):
             return False
 
         if self.__shuffle:
-            batch = random.sample(batch, len(batch))
+            random.shuffle(batch)
 
         # Split batch into columns
         tmp = [[] for _ in range(self.__num_query_cols)]
