@@ -24,7 +24,7 @@ class Node():
         self.__child_value = np.zeros(1968, dtype=np.float32)
         self.__child_virtual_loss = np.zeros(1968, dtype=np.float32)
         self.__policy = np.zeros(1968, dtype=np.float32)
-        self.__legal_mask = np.full(1968, -np.inf, dtype=np.float32)
+        self.__illegal_mask = np.ones(1968, dtype=bool)
 
     def add_child(self, move: chess.Move) -> None:
         child_state = self.__state.copy()
@@ -38,7 +38,7 @@ class Node():
         self.__policy = policy
         for move in self.legal_moves:
             key = self.__action_space.get_key(move)
-            self.__legal_mask[key] = 0
+            self.__illegal_mask[key] = False
 
     def apply_virtual_loss(self) -> None:
         if self.__parent:
@@ -100,7 +100,11 @@ class Node():
 
     @property
     def best_child(self):
-        return np.argmax(self.children_q + self.children_u + self.__legal_mask)
+        child_values = self.children_q + self.children_u
+        child_values[self.__illegal_mask] = -np.inf
+        max_value = np.max(child_values)
+        
+        return np.argmax(child_values + self.__child_virtual_loss)  # 1760nps, 10k nodes
 
     @property
     def is_checkmate(self) -> bool:
@@ -108,7 +112,7 @@ class Node():
 
     @property
     def is_terminal(self) -> bool:
-        return self.__state.is_game_over(True)
+        return self.__state.is_game_over(claim_draw=True)
 
     @property
     def legal_moves(self) -> list:
@@ -200,7 +204,7 @@ class Node():
     @property
     def action(self):
         return self.__action
-    
+
     @property
     def turn(self):
         return self.__state.turn
