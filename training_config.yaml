@@ -1,15 +1,12 @@
 # pre train
 c_puct_pre: 0 # 0
-db_path: 'C:/sqlite_chess_db/simple_encode.db'
+db_path: 'C:/sqlite_chess_db/lichess2200.db'
 
 # training
 num_searches: 1000 #2000
 c_puct: 1 # 1
 model_path: model_19.pt # model.pt
 cache_size: 8192 # 4096
-db_request_size: 8192 # 65536 # number of positions per request
-batch_size: 1024 # 256 # number of games per batch
-multi_threaded: False # True
 num_games: 4 # 400
 num_pit_games: 50
 win_rate_threshold: 0.55
