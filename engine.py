@@ -18,8 +18,8 @@ import cProfile
 
 
 class Engine():
-    def __init__(self, args=None, device="cpu") -> None:
-        self.__args = args
+    def __init__(self, device=torch.device("cpu")) -> None:
+        self.__args = None
         self.__device = device
         self.__info = {
             "name": "RoboHub",
@@ -58,7 +58,7 @@ class Engine():
         if "model_path" not in self.__args:
             self.__args["model_path"] = "model.pt"
         if "cache_size" not in self.__args:
-            self.__args["cache_size"] = 512
+            self.__args["cache_size"] = 1024
 
     def __ready(self) -> None:
         """Initialize the engine"""
@@ -70,26 +70,52 @@ class Engine():
         # initialize action space
         self.__action_space = ActionSpace()
         self.__model = None
+        self.__use_model_policy = False
 
         if os.path.exists(self.__args["model_path"]):
-            # load the model from the specified path
-            self.__model = ResNet(
-                self.__args['num_blocks'],
-                self.__args['num_features'],
-                self.__args['input_features'],
-                self.__action_space.size,
-                self.__device
-            )
             try:
-                self.__model.load_state_dict(torch.load(
-                    self.__args["model_path"]))
-                # self.__model = self.__model.to(self.__model.device)
+                self.__model_dict = torch.load(
+                    self.__args["model_path"])
+                if self.__action_space.size != self.__model_dict["policy_size"]:
+                    raise Exception("Incompatible model")
+                self.__model = ResNet(
+                    num_blocks=self.__model_dict["num_blocks"],
+                    num_features=self.__model_dict["num_features"],
+                    input_features=self.__model_dict["input_features"],
+                    policy_size=self.__model_dict["policy_size"],
+                    se=self.__model_dict["squeeze_and_excitation"]
+                )
+                self.__model.load_state_dict(
+                    self.__model_dict["model_state_dict"])
+                if self.__model_dict["disable_policy"]:
+                    self.__model.disable_policy()
+                    self.__use_model_policy = False
+                else:
+                    self.__model.enable_policy()
+                precision = self.__args["precision"]
+                if precision == 32:
+                    self.__model.dtype = torch.float32
+                elif precision == 16:
+                    self.__model.dtype = torch.float16
+                else:
+                    raise Exception("Incompatible precision")
+
+                self.__model.to(self.__device)
                 self.__model.eval()
-            except FileNotFoundError:
+            except Exception as e:
                 self.__model = None
-                print("Model corrupted or has wrong structure")
-        self.__mcts = MCTS(self.__args["c_puct"], self.__action_space,
-                           Cache(self.__args["cache_size"]), self.__model)
+                if str(e) != '':
+                    print(e)
+                    print("info Incompatible model")
+                else:
+                    print("Model corrupted or has wrong structure")
+        self.__mcts = MCTS(
+            self.__args["c_puct"],
+            self.__action_space,
+            Cache(self.__args["cache_size"]),
+            self.__model,
+            use_model_policy=self.__use_model_policy
+        )
 
         self.__default_go_args = {
             "ponder_move": None,
@@ -140,7 +166,7 @@ class Engine():
         best_line = self.__mcts.best_line()
         best_line_str = ""
         for move in best_line:
-            best_line_str += move.uci() + " "
+            best_line_str += move + " "
         print("info depth", self.__depth_reached, "nodes", self.__nodes_searched, "time", search_time * 1000,
               "score cp", self.__get_cp_score(), "nps", nps, "pv", best_line_str)
 
@@ -543,6 +569,5 @@ class Engine():
 
 
 if __name__ == "__main__":
-    # dml = torch_directml.device()
-    dml = "cpu"
+    dml = torch_directml.device()
     engine = Engine(dml)
