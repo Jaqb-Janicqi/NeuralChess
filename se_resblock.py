@@ -1,14 +1,15 @@
+import torch
 import torch.nn as nn
 from torchvision.ops import SqueezeExcitation
 
 
 class SeResBlock(nn.Module):
-    def __init__(self, num_features, reduction=32):
+    def __init__(self, num_features, reduction=32, dtype=torch.float32):
         super().__init__()
-        self.conv1 = nn.Conv2d(num_features, num_features, 3, 1, 1)
-        self.conv2 = nn.Conv2d(num_features, num_features, 3, 1, 1)
-        self.bnorm1 = nn.BatchNorm2d(num_features)
-        self.bnorm2 = nn.BatchNorm2d(num_features)
+        self.conv1 = nn.Conv2d(num_features, num_features, 3, 1, 1, dtype=dtype)
+        self.conv2 = nn.Conv2d(num_features, num_features, 3, 1, 1, dtype=dtype)
+        self.bnorm1 = nn.BatchNorm2d(num_features, dtype=dtype)
+        self.bnorm2 = nn.BatchNorm2d(num_features, dtype=dtype)
         self.relu = nn.ReLU(inplace=True)
         self.se = SqueezeExcitation(num_features, reduction)
         nn.init.xavier_uniform_(self.conv1.weight)
