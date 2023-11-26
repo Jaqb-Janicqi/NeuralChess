@@ -101,10 +101,8 @@ class Node():
     @property
     def best_child(self):
         child_values = self.children_q + self.children_u
-        child_values[self.__illegal_mask] = -np.inf
-        max_value = np.max(child_values)
-        
-        return np.argmax(child_values + self.__child_virtual_loss)  # 1760nps, 10k nodes
+        child_values[self.__illegal_mask] = -np.inf        
+        return np.argmax(child_values + self.__child_virtual_loss)  # 1800nps, 10k nodes
 
     @property
     def is_checkmate(self) -> bool:
