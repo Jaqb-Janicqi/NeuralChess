@@ -68,8 +68,8 @@ class TrainingModule:
         batch = (encoded, labels)
         return batch
 
-    def fit(self, train_loader, val_loader=None, max_epochs=None,
-            early_stopping=0, path=None, resume_model_path=None, log_plot=False,
+    def fit(self, train_loader, val_loader=None, max_epochs=None, early_stopping=0,
+            save_attrs={}, path=None, resume_model_path=None, log_plot=False,
             resume=True, resume_optimizer=True, reduece_on_plateau=True):
         self._dataloaders['train_loader'] = train_loader
         if val_loader is not None:
@@ -144,13 +144,9 @@ class TrainingModule:
                 recent_loss = sum(self._log_dict['train_loss']) / \
                     len(self._log_dict['train_loss'])
             if path is not None:
-                self.save(path, epoch, recent_loss)
+                self.save(path, epoch, recent_loss, save_attrs)
             self.on_epoch_end(self._log_dict)
             pbar.close()
-
-            # load best model
-            if path is not None:
-                self.load_best(path, resume_optimizer)
 
             # save training loss
             smoothing_window = 51
@@ -166,14 +162,20 @@ class TrainingModule:
             plt.savefig(f'{path}training_loss.pdf')
             plt.close()
 
-    def save(self, path, epoch, loss):
-        # save model
-        torch.save({
+            # load best model
+            if path is not None:
+                self.load_best(path, resume_optimizer)
+
+    def save(self, path, epoch, loss, model_attrs={}):
+        save_dict = {
             'epoch': epoch,
             'model_state_dict': self._model.state_dict(),
             'optimizer_state_dict': self._optimizers['optimizer'].state_dict(),
             'log_dict': self._log_dict,
-        }, f'{path}model_{epoch}_{loss}.pth')
+        }
+        for key in model_attrs.keys():
+            save_dict[key] = model_attrs[key]
+        torch.save(save_dict, f'{path}model_{epoch}_{loss}.pth')
 
     def load(self, path, resume_optimizer):
         checkpoint = torch.load(path)
