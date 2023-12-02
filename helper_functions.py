@@ -1,6 +1,282 @@
 import base64
+import math
 import numpy as np
 import torch
+import chess
+
+
+def bb_to_matrix(bb: np.uint64) -> np.ndarray:
+    """Converts a bitboard to a 8x8 matrix."""
+
+    return np.unpackbits(np.frombuffer(bb.tobytes(), dtype=np.uint8)).astype(np.float32).reshape(8, 8)
+
+
+def decode_from_fen(fen) -> np.ndarray:
+    """Returns a 9x8x8 stack of matrices, representing the current state."""
+
+    state = chess.Board(fen)
+    white = state.occupied_co[chess.WHITE]
+    black = state.occupied_co[chess.BLACK]
+    p_color = 1 if state.turn else -1
+    # get board attributes
+    castling_bb = np.uint64(state.castling_rights)
+    ep_square_bb = state.ep_square
+    if not ep_square_bb:
+        ep_square_bb = 0
+    # get pieces
+    piece_bbs = [
+        state.kings,
+        state.queens,
+        state.rooks,
+        state.bishops,
+        state.knights,
+        state.pawns
+    ]
+    matrices = []
+    # create color matrix
+    color_matrix = np.full((8, 8), p_color, dtype=np.float32)
+    matrices.append(color_matrix)
+    # convert pieces
+    for piece in range(6):
+        white_pieces = piece_bbs[piece] & white
+        white_pieces = bb_to_matrix(np.uint64(white_pieces))
+        black_pieces = piece_bbs[piece] & black
+        black_pieces = bb_to_matrix(np.uint64(black_pieces))
+        black_pieces *= -1
+        matrices.append(white_pieces + black_pieces)
+    # create ep_square matrix
+    matrices.append(bb_to_matrix(np.uint64(ep_square_bb)))
+    # convert castling
+    matrices.append(bb_to_matrix(np.uint64(castling_bb)))
+    return np.array(matrices, np.float32)
+
+
+def decode_from_fen_no_color_plane(fen) -> np.ndarray:
+    """Returns a 8x8x8 stack of matrices, representing the current state."""
+
+    state = chess.Board(fen)
+    white = state.occupied_co[chess.WHITE]
+    black = state.occupied_co[chess.BLACK]
+    # get board attributes
+    castling_bb = np.uint64(state.castling_rights)
+    ep_square_bb = state.ep_square
+    if not ep_square_bb:
+        ep_square_bb = 0
+    # get pieces
+    piece_bbs = [
+        state.kings,
+        state.queens,
+        state.rooks,
+        state.bishops,
+        state.knights,
+        state.pawns
+    ]
+    matrices = []
+    # convert pieces
+    for piece in range(6):
+        white_pieces = piece_bbs[piece] & white
+        white_pieces = bb_to_matrix(np.uint64(white_pieces))
+        black_pieces = piece_bbs[piece] & black
+        black_pieces = bb_to_matrix(np.uint64(black_pieces))
+        black_pieces *= -1
+        matrices.append(white_pieces + black_pieces)
+    # create ep_square matrix
+    matrices.append(bb_to_matrix(np.uint64(ep_square_bb)))
+    # convert castling
+    matrices.append(bb_to_matrix(np.uint64(castling_bb)))
+    return np.array(matrices, np.float32)
+
+
+def decode_from_fen_no_color_plane_pieces_only(fen) -> np.ndarray:
+    """Returns a 6x8x8 stack of matrices, representing the current state."""
+
+    state = chess.Board(fen)
+    white = state.occupied_co[chess.WHITE]
+    black = state.occupied_co[chess.BLACK]
+    # get pieces
+    piece_bbs = [
+        state.kings,
+        state.queens,
+        state.rooks,
+        state.bishops,
+        state.knights,
+        state.pawns
+    ]
+    matrices = []
+    # convert pieces
+    for piece in range(6):
+        white_pieces = piece_bbs[piece] & white
+        white_pieces = bb_to_matrix(np.uint64(white_pieces))
+        black_pieces = piece_bbs[piece] & black
+        black_pieces = bb_to_matrix(np.uint64(black_pieces))
+        black_pieces *= -1
+        matrices.append(white_pieces + black_pieces)
+    return np.array(matrices, np.float32)
+
+
+def decode_from_fen_rotate(fen) -> np.ndarray:
+    """Returns a 8x8x8 stack of matrices, representing the current state from white perspective."""
+
+    state = chess.Board(fen)
+    if state.turn == chess.BLACK:
+        state = state.mirror()
+    white = state.occupied_co[chess.WHITE]
+    black = state.occupied_co[chess.BLACK]
+    p_color = 1 if state.turn else -1
+    # get board attributes
+    castling_bb = np.uint64(state.castling_rights)
+    ep_square_bb = state.ep_square
+    if not ep_square_bb:
+        ep_square_bb = 0
+    # get pieces
+    piece_bbs = [
+        state.kings,
+        state.queens,
+        state.rooks,
+        state.bishops,
+        state.knights,
+        state.pawns
+    ]
+    matrices = []
+    # # create color matrix
+    # color_matrix = np.full((8, 8), p_color, dtype=np.float32)
+    # matrices.append(color_matrix)
+    # convert pieces
+    for piece in range(6):
+        white_pieces = piece_bbs[piece] & white
+        white_pieces = bb_to_matrix(np.uint64(white_pieces))
+        black_pieces = piece_bbs[piece] & black
+        black_pieces = bb_to_matrix(np.uint64(black_pieces))
+        black_pieces *= -1
+        matrices.append(white_pieces + black_pieces)
+    # create ep_square matrix
+    matrices.append(bb_to_matrix(np.uint64(ep_square_bb)))
+    # convert castling
+    matrices.append(bb_to_matrix(np.uint64(castling_bb)))
+    return np.array(matrices, np.float32)
+
+
+def decode_from_fen_sparse(fen) -> np.ndarray:
+    """Returns a 15x8x8 stack of matrices, representing the current state."""
+
+    state = chess.Board(fen)
+    white = state.occupied_co[chess.WHITE]
+    black = state.occupied_co[chess.BLACK]
+    colors = [white, black]
+    # get board attributes
+    castling_bb = np.uint64(state.castling_rights)
+    ep_square_bb = state.ep_square
+    if not ep_square_bb:
+        ep_square_bb = 0
+    # get pieces
+    piece_bbs = [
+        state.kings,
+        state.queens,
+        state.rooks,
+        state.bishops,
+        state.knights,
+        state.pawns
+    ]
+    matrices = []
+    # create color matrix
+    color_matrix = np.zeros((8, 8), dtype=np.float32) if state.turn else np.ones(
+        (8, 8), dtype=np.float32)
+    matrices.append(color_matrix)
+    # convert pieces
+    for color in colors:
+        for piece in range(6):
+            pieces = piece_bbs[piece] & color
+            pieces = bb_to_matrix(np.uint64(pieces))
+            matrices.append(pieces)
+    # create ep_square matrix
+    matrices.append(bb_to_matrix(np.uint64(ep_square_bb)))
+    # convert castling
+    matrices.append(bb_to_matrix(np.uint64(castling_bb)))
+    return np.array(matrices, np.float32)
+
+
+def decode_from_fen_sparse_bit(fen) -> np.ndarray:
+    """Returns a 13x8x8 stack of matrices, representing the current state from white perspective."""
+
+    state = chess.Board(fen)
+    white = state.occupied_co[chess.WHITE]
+    black = state.occupied_co[chess.BLACK]
+    colors = [white, black]
+    # get pieces
+    piece_bbs = [
+        state.kings,
+        state.queens,
+        state.rooks,
+        state.bishops,
+        state.knights,
+        state.pawns
+    ]
+    matrices = []
+    # convert pieces
+    for color in colors:
+        for piece in range(6):
+            pieces = piece_bbs[piece] & color
+            pieces = bb_to_matrix(np.uint64(pieces))
+            matrices.append(pieces)
+    p_matrix = np.zeros((8, 8), dtype=np.float32) if state.turn else np.ones(
+        (8, 8), dtype=np.float32)
+    matrices.append(p_matrix)
+    return np.array(matrices, np.float32)
+
+
+def bb_to_array(bb: np.uint64) -> np.ndarray:
+    """Converts a bitboard to a 64 array."""
+
+    return np.unpackbits(np.frombuffer(bb.tobytes(), dtype=np.uint8)).astype(np.float32)
+
+
+def decode_from_fen_bit(fen) -> np.ndarray:
+    state = chess.Board(fen)
+    white = state.occupied_co[chess.WHITE]
+    black = state.occupied_co[chess.BLACK]
+    colors = [white, black]
+    # get pieces
+    piece_bbs = [
+        state.kings,
+        state.queens,
+        state.rooks,
+        state.bishops,
+        state.knights,
+        state.pawns
+    ]
+    arrs = []
+    # convert pieces
+    for color in colors:
+        for piece in range(6):
+            pieces = piece_bbs[piece] & color
+            pieces = bb_to_array(np.uint64(pieces))
+            arrs.append(pieces)
+    return np.concatenate(arrs, axis=0)
+
+
+def get_centipawns(prob):
+    return int(111.714640912 * math.tan(1.5620688421 * prob))
+
+
+def map_centipawns_to_probability(centipawns):
+    return math.atan2(centipawns, 111.714640912) / 1.5620688421
+
+
+def clip_value(value):
+    cp = get_centipawns(value)
+    if cp > 1500:
+        cp = 1500
+    elif cp < -1500:
+        cp = -1500
+    return map_centipawns_to_probability(cp)
+
+
+def cp_to_value_clip(cp):
+    if cp > 1500:
+        cp = 1500
+    elif cp < -1500:
+        cp = -1500
+    return map_centipawns_to_probability(cp)
 
 
 def encode_a85(byte_rep):
