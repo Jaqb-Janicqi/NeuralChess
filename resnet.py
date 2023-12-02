@@ -1,7 +1,4 @@
 from copy import deepcopy
-from typing import Union
-
-from torch import device
 from se_resblock import SeResBlock
 from resblock import ResBlock
 import torch
@@ -9,52 +6,63 @@ import torch.nn as nn
 
 
 class ResNet(nn.Module):
-    def __init__(self, num_blocks, num_features, input_features, policy_size, se=False, dtype=torch.float32, device=torch.device("cpu")):
+    def __init__(self, *args, **kwargs):
         super().__init__()
-        self.__dtype = dtype
-        self.__device = device
+        if kwargs.get("dtype") is None:
+            self.__dtype = torch.float32
+        else:
+            self.__dtype = kwargs.get("dtype")
+        if kwargs.get("device") is None:
+            self.__device = torch.device("cpu")
+        else:
+            self.__device = kwargs.get("device")
+        self.__num_blocks = kwargs.get("num_blocks")
+        self.__num_features = kwargs.get("num_features")
+        self.__num_input_features = kwargs.get("num_input_features")
+        self.__policy_size = kwargs.get("policy_size")
+        self.__squeeze_and_excitation = kwargs.get("squeeze_and_excitation")
+        self.__weight_init_mode = kwargs.get("weight_init_mode")
+        self.__disable_policy = False
+        self.__init_model()
+
+    def __init_model(self):
         self.start_block = nn.Sequential(
-            nn.Conv2d(input_features, num_features, 3, 1, 1, dtype=dtype),
-            nn.BatchNorm2d(num_features, dtype=dtype),
+            nn.Conv2d(self.__num_input_features,
+                      self.__num_features, 1, dtype=self.__dtype),
+            nn.BatchNorm2d(self.__num_features, dtype=self.__dtype),
             nn.ReLU(inplace=True)
         )
-        if se:  # Squeeze and Excitation
+        if self.__squeeze_and_excitation:
             self.blocks = nn.ModuleList(
-                [SeResBlock(num_features, dtype=dtype)
-                 for _ in range(num_blocks)]
+                [SeResBlock(self.__num_features, dtype=self.__dtype)
+                 for _ in range(self.__num_blocks)]
             )
         else:
             self.blocks = nn.ModuleList(
-                [ResBlock(num_features, dtype=dtype)
-                 for _ in range(num_blocks)]
+                [ResBlock(self.__num_features, dtype=self.__dtype)
+                 for _ in range(self.__num_blocks)]
             )
-        p_size, v_size = self.calculate_input_size(
-            num_features, input_features)
+        p_size, v_size = self.calculate_input_size()
         self.policy = nn.Sequential(
-            nn.Conv2d(num_features, num_features, 1, dtype=dtype),
-            nn.Conv2d(num_features, 80, 1, dtype=dtype),
+            nn.Conv2d(self.__num_features, self.__num_features,
+                      1, dtype=self.__dtype),
+            nn.Conv2d(self.__num_features, 80, 1, dtype=self.__dtype),
             nn.ReLU(inplace=True),
             nn.Flatten(),
-            nn.Linear(p_size, policy_size, dtype=dtype),
+            nn.Linear(p_size, self.__policy_size, dtype=self.__dtype),
             nn.Softmax(dim=1)
         )
         self.value = nn.Sequential(
-            nn.Conv2d(num_features, 80, 1, dtype=dtype),
+            nn.Conv2d(self.__num_features, int(
+                self.__num_features/2), 1, dtype=self.__dtype),
             nn.ReLU(inplace=True),
             nn.Flatten(),
-            nn.Linear(v_size, 256, dtype=dtype),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, 1, dtype=dtype),
+            nn.Linear(v_size, 3, dtype=self.__dtype),
+            nn.Linear(3, 1, dtype=self.__dtype),
             nn.Tanh()
         )
-        self.__disable_policy = False
-        self.__squeeze_and_excitation = se
-        nn.init.xavier_uniform_(self.start_block[0].weight)
-        nn.init.xavier_uniform_(self.policy[0].weight)
-        nn.init.xavier_uniform_(self.policy[1].weight)
-        nn.init.xavier_uniform_(self.value[0].weight)
-        nn.init.xavier_uniform_(self.value[3].weight)
-        nn.init.xavier_uniform_(self.value[5].weight)
+        if self.__weight_init_mode is not None:
+            self.init_weights(self.__weight_init_mode)
 
     def forward(self, x):
         x = self.start_block(x)
@@ -78,17 +86,57 @@ class ResNet(nn.Module):
     def get_value(self, v):
         return v.item()
 
-    def calculate_input_size(self, num_features, input_features):
-        x = torch.zeros((1, input_features, 8, 8)).float()
+    def init_weights(self, mode):
+        if mode == "xavier":
+            self.apply(self.__xavier_init)
+        elif mode == "kaiming":
+            self.apply(self.__kaiming_init)
+        elif mode == "orthogonal":
+            self.apply(self.__orthogonal_init)
+        else:
+            raise ValueError("Invalid weight initialization mode.")
+
+    def __xavier_init(self, m):
+        if isinstance(m, nn.Conv2d):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def __kaiming_init(self, m):
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.kaiming_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def __orthogonal_init(self, m):
+        if isinstance(m, nn.Conv2d):
+            nn.init.orthogonal_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.orthogonal_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def calculate_input_size(self):
+        x = torch.zeros((1, self.__num_input_features, 8, 8)).float()
         start_block_copy = deepcopy(self.start_block).float()
         blocks_copy = deepcopy(self.blocks).float()
         p_seqence = nn.Sequential(
-            nn.Conv2d(num_features, num_features, 1),
-            nn.Conv2d(num_features, 80, 1),
+            nn.Conv2d(self.__num_features, self.__num_features, 1),
+            nn.Conv2d(self.__num_features, 80, 1),
             nn.Flatten(),
         )
         v_seqence = nn.Sequential(
-            nn.Conv2d(num_features, 80, 1),
+            nn.Conv2d(self.__num_features, int(self.__num_features/2), 1),
             nn.Flatten(),
         )
 
@@ -125,22 +173,22 @@ class ResNet(nn.Module):
             self.float()
         self.__dtype = dtype
 
+    @property
+    def num_blocks(self):
+        return self.__num_blocks
+
+    @property
+    def num_features(self):
+        return self.__num_features
+
+    @property
+    def input_features(self):
+        return self.__input_features
+
+    @property
+    def policy_size(self):
+        return self.__policy_size
+
     def to(self, device):
         self.__device = device
         return super().to(device)
-
-
-if __name__ == "__main__":
-    import torch.nn.functional as F
-    net = ResNet(20, 256, 8, 1968)
-    policy, val = net(torch.zeros((1, 8, 8, 8)))
-    zeros = torch.zeros(1)
-    val = val.flatten()
-    loss = F.mse_loss(val, zeros)
-    policy_loss = F.cross_entropy(policy, torch.zeros((1, 1968)))
-    loss = loss + policy_loss
-    loss.backward()
-    policy = net.get_policy(policy)
-    val = net.get_value(val)
-    print(val)
-    print(policy.shape)

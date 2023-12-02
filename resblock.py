@@ -10,8 +10,6 @@ class ResBlock(nn.Module):
         self.bnorm1 = nn.BatchNorm2d(num_features, dtype=dtype)
         self.bnorm2 = nn.BatchNorm2d(num_features, dtype=dtype)
         self.nonlinear = nn.ReLU(inplace=True)
-        nn.init.xavier_uniform_(self.conv1.weight)
-        nn.init.xavier_uniform_(self.conv2.weight)
 
     def forward(self, x):
         residual = x
