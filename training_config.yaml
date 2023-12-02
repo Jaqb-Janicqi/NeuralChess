@@ -1,23 +1,10 @@
 # pre train
 c_puct_pre: 0 # 0
 db_path: 'C:/sqlite_chess_db/lichess2200.db'
+# db_path: 'C:/sqlite_chess_db/lichess2200_whitepov.db'
 
-# training
-num_searches: 1000 #2000
-c_puct: 1 # 1
-model_path: model_19.pt # model.pt
-cache_size: 8192 # 4096
-num_games: 4 # 400
-num_pit_games: 50
-win_rate_threshold: 0.55
-num_episodes: 10
-window_size: 100000
-num_epochs: 2 # 10
-training_split: 0.9 # 0.9
-# optimizer
-
-# saturation
-lr_scaling: 0.1 # 0.1
-num_epochs_saturation: 10 # 10
-patience: 5 # 5
-pit_temp: 1 # 1
+# model params
+input_features: 15
+num_blocks: 6
+num_features: 64
+squeeze_and_excitation: False

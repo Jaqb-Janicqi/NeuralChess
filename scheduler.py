@@ -103,20 +103,3 @@ class Scheduler():
     @min_lr.setter
     def min_lr(self, min_lr):
         self.__min_lr = min_lr
-
-
-if __name__ == "__main__":
-    opt = torch.optim.ASGD([torch.zeros(1)], lr=1e-3)
-    params = opt.param_groups[0]
-    sch = Scheduler(opt, 4000,
-                    max_lr=1e-1,
-                    min_lr=5e-2,
-                    pct_start=0.1,
-                    pct_max=0.1,
-                    annealing='cosine',)
-    lrs = []
-    for i in range(4000):
-        sch.step()
-        lrs.append(params['lr'])
-    plt.plot(lrs)
-    plt.show(block=True)

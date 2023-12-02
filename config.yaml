@@ -12,7 +12,7 @@ c_puct: 500
 
 # model_path - path to your NN model.
 # default: model.pt
-model_path: model.pth
+model_path: models/model.pth
 
 # cache_size: size of the internal inference cache in Mb.
 # The engine stores results of inference in an internal cache.
