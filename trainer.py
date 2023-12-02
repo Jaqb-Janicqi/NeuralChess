@@ -50,30 +50,67 @@ class NetworkTrainer(TrainingModule):
             return self.pv_step(batch)
 
     def configure_optimizers(self):
+        # self.asgd()
+        self.adamw()
+        # self.rms()
+        return self._step_list
+
+    def asgd(self):
         optimizer = torch.optim.ASGD(
             self._model.parameters(),
-            lr=2e-4,
+            lr=1e-4,
             weight_decay=1e-4,
-            # lambd=0.1,
-            # alpha=0.99,
         )
         self._optimizers['optimizer'] = optimizer
         self._step_list.append(self._optimizers['optimizer'])
-        scheduler = Scheduler(
-            optimizer=optimizer,
-            num_steps=self.steps_per_epoch,
-            max_lr=2e-1,
-            min_lr=2e-2,
-            pct_start=0.05,
-            pct_max=0.1,
-            annealing='cosine',
+        # scheduler = Scheduler(
+        #     optimizer=optimizer,
+        #     num_steps=self.steps_per_epoch,
+        #     max_lr=1e-4,
+        #     min_lr=1e-6,
+        #     pct_start=0.05,
+        #     pct_max=0,
+        #     annealing='cosine',
+        #     conditional_wd=False
+        # )
+        # self._schedulers['scheduler'] = scheduler
+        # self._step_list.append(scheduler)
+
+    def adamw(self):
+        optimizer = torch.optim.AdamW(
+            self._model.parameters(),
+            lr=1e-4,
+            weight_decay=1e-2,
+            # betas=(0.85, 0.95),
+            amsgrad=True,
         )
-        self._schedulers['scheduler'] = scheduler
-        self._step_list.append(scheduler)
+        self._optimizers['optimizer'] = optimizer
+        self._step_list.append(self._optimizers['optimizer'])
+        # scheduler = Scheduler(
+        #     optimizer=optimizer,
+        #     num_steps=self.steps_per_epoch,
+        #     max_lr=1e-6,
+        #     min_lr=1e-8,
+        #     pct_start=0.05,
+        #     pct_max=0.05,
+        #     annealing='cosine',
+        # )
+        # self._schedulers['scheduler'] = scheduler
+        # self._step_list.append(scheduler)
+
+    def rms(self):
+        optimizer = torch.optim.RMSprop(
+            self._model.parameters(),
+            lr=1e-4,
+            weight_decay=1e-4,
+            momentum=0.9,
+            centered=True,
+        )
+        self._optimizers['optimizer'] = optimizer
+        self._step_list.append(self._optimizers['optimizer'])
 
     def on_epoch_end(self, log_dict):
         for dataloader in self._dataloaders.values():
             dataloader.restart()
         for scheduler in self._schedulers.values():
             scheduler.restart()
-        
