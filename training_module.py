@@ -92,7 +92,6 @@ class TrainingModule:
 
             self._model.train()
             for batch in train_loader:
-                # batch = self.convert_batch(batch)
                 loss = self.training_step(batch)
                 self.log('train_loss', loss.item())
                 self._optimizers['optimizer'].zero_grad()
@@ -124,7 +123,6 @@ class TrainingModule:
                 self._model.eval()
                 with torch.no_grad():
                     for batch in val_loader:
-                        # batch = self.convert_batch(batch)
                         val_loss = self.test_step(batch).item()
                         self.log('val_loss', val_loss)
                 self.log('avg_loss',
@@ -144,7 +142,7 @@ class TrainingModule:
                 recent_loss = sum(self._log_dict['train_loss']) / \
                     len(self._log_dict['train_loss'])
             if path is not None:
-                self.save(path, epoch, recent_loss, save_attrs)
+                self.save(path, epoch, self._log_dict['avg_loss'][-1], save_attrs)
             self.on_epoch_end(self._log_dict)
             pbar.close()
 
