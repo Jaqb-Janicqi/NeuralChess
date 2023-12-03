@@ -76,22 +76,31 @@ class Engine():
             try:
                 self.__model_dict = torch.load(
                     self.__args["model_path"])
-                if self.__action_space.size != self.__model_dict["policy_size"]:
-                    raise Exception("Incompatible model")
+                if "policy_size" not in self.__model_dict:
+                    self.__use_model_policy = False
+                else:
+                    if self.__action_space.size != self.__model_dict["policy_size"]:
+                        raise Exception("Incompatible model")
+                    self.__use_model_policy = True
                 self.__model = ResNet(
                     num_blocks=self.__model_dict["num_blocks"],
                     num_features=self.__model_dict["num_features"],
-                    input_features=self.__model_dict["input_features"],
-                    policy_size=self.__model_dict["policy_size"],
-                    se=self.__model_dict["squeeze_and_excitation"]
+                    num_input_features=self.__model_dict["num_input_features"],
+                    policy_size=self.__action_space.size,
+                    squeeze_and_excitation=self.__model_dict["squeeze_and_excitation"]
                 )
                 self.__model.load_state_dict(
                     self.__model_dict["model_state_dict"])
-                if self.__model_dict["disable_policy"]:
+                if "disable_policy" in self.__model_dict:
+                    if self.__model_dict["disable_policy"]:
+                        self.__model.disable_policy()
+                        self.__use_model_policy = False
+                    else:
+                        self.__model.enable_policy()
+                        self.__use_model_policy = True
+                else:
                     self.__model.disable_policy()
                     self.__use_model_policy = False
-                else:
-                    self.__model.enable_policy()
                 precision = self.__args["precision"]
                 if precision == 32:
                     self.__model.dtype = torch.float32
