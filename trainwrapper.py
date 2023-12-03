@@ -46,12 +46,14 @@ class TrainWrapper():
             'num_features': self.__training_args['num_features'],
             'num_input_features': self.__training_args['input_features'],
             'dtype': torch.float32,
-            'squeeze_and_excitation': self.__training_args['squeeze_and_excitation']
+            'squeeze_and_excitation': self.__training_args['squeeze_and_excitation'],
+            'disable_policy': True,
+            'policy_size': self.__action_space.size
         }
         resume_training = True
         db_size = self.get_db_size()
         b_size = int(512*8)
-        slice_size = int(b_size/2)
+        slice_size = int(b_size/8)
         dataloader = DataLoader(
             db_path=self.__training_args['db_path'],
             table_name='positions',
@@ -120,7 +122,7 @@ class TrainWrapper():
             if len(os.listdir(path)) == 0:
                 resume_training = False
 
-        trainer.fit(dataloader, val_dataloader, 20, 5, path=path, save_attrs=model_attrs,
+        trainer.fit(dataloader, val_dataloader, 300, 5, path=path, save_attrs=model_attrs,
                     resume=resume_training, resume_optimizer=False, log_plot=True)
 
     def get_db_size(self):
@@ -216,10 +218,9 @@ class TrainWrapper():
             num_input_features=self.__training_args['input_features'],
             squeeze_and_excitation=self.__training_args['squeeze_and_excitation'],
             policy_size=self.__action_space.size,
-            device=self.__device,
-            weight_init_mode='xavier'
+            device=self.__device
         )
-        checkpoint = torch.torch.load("models/v_only.pth")
+        checkpoint = torch.torch.load("models_15_6_64/model_299_0.037531253133525344.pth")
         model.load_state_dict(checkpoint['model_state_dict'])
         model.disable_policy()
         model.to(self.__device)
@@ -233,9 +234,11 @@ class TrainWrapper():
                     "SELECT * FROM positions LIMIT 1 OFFSET {}".format(idx)).fetchall()
                 conn.close()
                 id, enc, fen, cp, policy, value, samples, legal_moves = db_slice[0]
-                enc = torch.tensor(decode_position(enc)).unsqueeze(0)
-                enc = enc.to(self.__device)
-                v_hat = model(enc)
+                value = cp_to_value_clip(cp)
+                m_in = decode_from_fen_sparse(fen)
+                m_in = torch.tensor(m_in).unsqueeze(0)
+                m_in = m_in.to(self.__device)
+                v_hat = model(m_in)
                 v_hat = v_hat.cpu().numpy()
                 print(fen, value, v_hat)
                 print()
@@ -263,23 +266,35 @@ class TrainWrapper():
             print(param)
 
     def train_all(self):
+        model_attrs = {
+            'num_blocks': self.__training_args['num_blocks'],
+            'num_features': self.__training_args['num_features'],
+            'num_input_features': self.__training_args['input_features'],
+            'dtype': torch.float32,
+            'squeeze_and_excitation': self.__training_args['squeeze_and_excitation'],
+            'disable_policy': False,
+            'policy_size': self.__action_space.size
+        }
+        resume_training = True
         db_size = self.get_db_size()
-        b_size = int(512*3)
+        b_size = int(512*8)
+        slice_size = int(b_size/8)
         dataloader = DataLoader(
             db_path=self.__training_args['db_path'],
             table_name='positions',
-            num_batches=300,
+            num_batches=100,
             batch_size=b_size,
             min_index=1,
-            max_index=db_size*0.9,
+            max_index=db_size*0.95,
             random=True,
             replace=False,
-            shuffle=True,
-            slice_size=b_size,
-            output_columns=['encoded', 'policy', 'value'],
+            shuffle=False,
+            slice_size=slice_size,
+            output_columns=['fen', 'cp', 'policy'],
             to_tensor=True,
             specials={
-                'encoded': decode_position,
+                'fen': decode_from_fen_sparse,
+                'cp': cp_to_value_clip,
                 'policy': decode_policy
             },
             use_offsets=False
@@ -288,42 +303,53 @@ class TrainWrapper():
         val_dataloader = DataLoader(
             db_path=self.__training_args['db_path'],
             table_name='positions',
-            num_batches=100,
+            num_batches=50,
             batch_size=b_size,
-            min_index=db_size*0.9,
+            min_index=db_size*0.95,
             max_index=db_size,
             random=False,
             replace=False,
             shuffle=False,
-            slice_size=b_size,
-            output_columns=['encoded', 'policy', 'value'],
+            slice_size=slice_size,
+            output_columns=['fen', 'cp', 'policy'],
             to_tensor=True,
             specials={
-                'encoded': decode_position,
+                'fen': decode_from_fen_sparse,
+                'cp': cp_to_value_clip,
                 'policy': decode_policy
             },
             use_offsets=False
         )
         val_dataloader.start()
         model = ResNet(
-            self.__args['num_blocks'],
-            self.__args['num_features'],
-            self.__args['input_features'],
-            self.__action_space.size,
-            se=self.__args['squeeze_and_excitation']
+            num_blocks=self.__training_args['num_blocks'],
+            num_features=self.__training_args['num_features'],
+            num_input_features=self.__training_args['input_features'],
+            squeeze_and_excitation=self.__training_args['squeeze_and_excitation'],
+            policy_size=self.__action_space.size,
+            device=self.__device,
+            # weight_init_mode='xavier'
         )
         model.to(self.__device)
         trainer = NetworkTrainer(model, False, self.__device)
-
-        path = "models" + "_" + str(self.__args['input_features']) + "_" + str(
-            self.__args['num_blocks']) + "_" + str(self.__args['num_features'])
-        if self.__args['squeeze_and_excitation']:
+        path = 'models_'
+        path += str(self.__training_args['input_features'])
+        path += "_"
+        path += str(self.__training_args['num_blocks'])
+        path += "_"
+        path += str(self.__training_args['num_features'])
+        if self.__training_args['squeeze_and_excitation']:
             path += "_se"
         path += "/"
-        os.makedirs(path, exist_ok=True)
+        if not os.path.exists(path):
+            os.makedirs(path)
+            resume_training = False
+        else:
+            if len(os.listdir(path)) == 0:
+                resume_training = False
 
-        trainer.fit(dataloader, val_dataloader, 50, 5, path=path,
-                    resume=False, resume_optimizer=False, log_plot=True)
+        trainer.fit(dataloader, val_dataloader, 300, 5, path=path, save_attrs=model_attrs,
+                    resume=resume_training, resume_optimizer=False, log_plot=True)
 
 
 if __name__ == "__main__":
@@ -331,6 +357,6 @@ if __name__ == "__main__":
     # az.find_lr()
     # az.load_and_print_params()
     # az.find_params()
-    az.train_value()
+    # az.train_value()
     # az.predict()
-    # az.train_all()
+    az.train_all()
