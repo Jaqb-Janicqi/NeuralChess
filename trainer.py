@@ -28,12 +28,12 @@ class NetworkTrainer(TrainingModule):
         state = state.to(self._device)
         policy = policy.to(self._device)
         value = value.to(self._device)
-        policy_hat, value_hat = self._model(state)
+        value_hat, policy_hat = self._model(state)
         policy_hat = policy_hat.squeeze(1)
         value_hat = value_hat.squeeze(1)
         value_loss = nn.functional.mse_loss(value_hat, value)
-        policy_loss = nn.functional.cross_entropy(policy_hat, policy)
-        loss = policy_loss + value_loss
+        policy_loss = nn.functional.mse_loss(policy_hat, policy)
+        loss = (policy_loss + value_loss) / 2
         del state, policy, value, policy_hat, value_hat, policy_loss, value_loss
         return loss
 
@@ -79,7 +79,7 @@ class NetworkTrainer(TrainingModule):
     def adamw(self):
         optimizer = torch.optim.AdamW(
             self._model.parameters(),
-            lr=1e-4,
+            lr=1e-3,
             weight_decay=1e-2,
             # betas=(0.85, 0.95),
             amsgrad=True,
