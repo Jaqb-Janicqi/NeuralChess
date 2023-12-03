@@ -1,12 +1,7 @@
 import numpy as np
 import chess
 from actionspace import ActionSpace as asp
-
-
-def bb_to_matrix(bb: np.uint64) -> np.ndarray:
-    """Converts a bitboard to a 8x8 matrix."""
-
-    return np.unpackbits(np.frombuffer(bb.tobytes(), dtype=np.uint8)).astype(np.float32).reshape(8, 8)
+from helper_functions import bb_to_matrix
 
 
 class Node():
@@ -101,8 +96,9 @@ class Node():
     @property
     def best_child(self):
         child_values = self.children_q + self.children_u
-        child_values[self.__illegal_mask] = -np.inf        
-        return np.argmax(child_values + self.__child_virtual_loss)  # 1800nps, 10k nodes
+        child_values[self.__illegal_mask] = -np.inf
+        # 1800nps, 10k nodes
+        return np.argmax(child_values + self.__child_virtual_loss)
 
     @property
     def is_checkmate(self) -> bool:
@@ -150,11 +146,11 @@ class Node():
 
     @property
     def encoded(self) -> np.ndarray:
-        """Returns a 9x8x8 stack of matrices, representing the current state from white perspective."""
+        """Returns a 15x8x8 stack of matrices, representing the current state."""
 
         white = self.__state.occupied_co[chess.WHITE]
         black = self.__state.occupied_co[chess.BLACK]
-        p_color = 1 if self.__state.turn else -1
+        colors = [white, black]
         # get board attributes
         castling_bb = np.uint64(self.__state.castling_rights)
         ep_square_bb = self.__state.ep_square
@@ -171,16 +167,15 @@ class Node():
         ]
         matrices = []
         # create color matrix
-        color_matrix = np.full((8, 8), p_color, dtype=np.float32)
+        color_matrix = np.zeros((8, 8), dtype=np.float32) if self.__state.turn else np.ones(
+            (8, 8), dtype=np.float32)
         matrices.append(color_matrix)
         # convert pieces
-        for piece in range(6):
-            white_pieces = piece_bbs[piece] & white
-            white_pieces = bb_to_matrix(np.uint64(white_pieces))
-            black_pieces = piece_bbs[piece] & black
-            black_pieces = bb_to_matrix(np.uint64(black_pieces))
-            black_pieces *= -1
-            matrices.append(white_pieces + black_pieces)
+        for color in colors:
+            for piece in range(6):
+                pieces = piece_bbs[piece] & color
+                pieces = bb_to_matrix(np.uint64(pieces))
+                matrices.append(pieces)
         # create ep_square matrix
         matrices.append(bb_to_matrix(np.uint64(ep_square_bb)))
         # convert castling
