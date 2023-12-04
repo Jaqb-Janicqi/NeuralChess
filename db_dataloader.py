@@ -4,6 +4,11 @@ import multiprocessing as mp
 import sys
 import numpy as np
 import torch
+import chess
+from actionspace import ActionSpace
+
+
+ASPACE = ActionSpace()
 
 
 class bit_array():
@@ -57,7 +62,6 @@ class DataLoader(mp.Process):
         self.__output_columns = output_columns
         self.__specials_query_pos = {}
         self.__data_col_pos = {}
-        self.__label_col_pos = {}
         self.__num_query_cols = None
         self.__idx_drawn = 0
         self.__last_idx = 0
@@ -93,6 +97,14 @@ class DataLoader(mp.Process):
                 self.__specials_query_pos[row[1]] = row[0]
             if row[1] in self.__output_columns:
                 self.__data_col_pos[row[1]] = row[0]
+        
+        ##############################################
+        # add legal policy
+        if 'policy' in self.__output_columns:
+            self.__num_query_cols += 1
+            self.__data_col_pos['legal_policy'] = self.__num_query_cols - 1
+            self.__output_columns.append('legal_policy')
+        ##############################################
 
     def __setup_attrs(self):
         if self.__max_index == 0:
@@ -158,8 +170,17 @@ class DataLoader(mp.Process):
                 missed += 1
             missed = 0
 
+            # convert slice to list of lists
+            slc = [list(row) for row in slc]
+
+            ##############################################
+            # create legal policy
+            if 'policy' in self.__output_columns:
+                for row in slc:
+                    row.append(self.get_legal_policy(row[self.__data_col_pos['fen']]))
+            ##############################################
+
             if self.__specials:
-                slc = [list(row) for row in slc]
                 for key, func in self.__specials.items():
                     special_idx = self.__specials_query_pos[key]
                     for row in slc:
@@ -176,7 +197,7 @@ class DataLoader(mp.Process):
         tmp = [[] for _ in range(self.__num_query_cols)]
         for row in batch:
             for i, col in enumerate(row):
-                tmp[i].append(col)
+                tmp[i].append(col)        
 
         batch = []
         if self.__to_tensor:
@@ -270,6 +291,14 @@ class DataLoader(mp.Process):
     @property
     def dataset(self):
         return self
+
+    def get_legal_policy(self, fen):
+        board = chess.Board(fen)
+        legal_moves = board.legal_moves
+        legal_policy = np.zeros(ASPACE.size, dtype=np.float32)
+        for move in legal_moves:
+            legal_policy[ASPACE.get_key(move)] = 1
+        return legal_policy
 
 
 def convert_to_numpy(arr):
