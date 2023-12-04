@@ -107,26 +107,26 @@ class TrainingModule:
                 pbar.set_description(
                     f'Epoch {epoch}, lr: {lr}')
 
-                if len(self._log_dict['train_loss']) > 100:
-                    recent_loss = sum(
-                        self._log_dict['train_loss'][-100:]) / 100
+                if len(self._log_dict['train_loss']) > len(train_loader):
+                    train_loss = sum(self._log_dict['train_loss'][-len(train_loader):])
+                    train_loss /= len(train_loader)
                 else:
-                    recent_loss = sum(
-                        self._log_dict['train_loss']) / len(self._log_dict['train_loss'])
+                    train_loss = sum(self._log_dict['train_loss'])
+                    train_loss /= len(self._log_dict['train_loss'])
                 pbar.set_postfix(
-                    {'recent_averaged_loss': recent_loss})
+                    {'recent_averaged_loss': train_loss})
 
             if val_loader is None:
-                self.log('avg_loss',
-                         sum(self._log_dict['train_loss']) / len(self._log_dict['train_loss']))
+                self.log('avg_loss', train_loss)
             else:
                 self._model.eval()
                 with torch.no_grad():
                     for batch in val_loader:
-                        val_loss = self.test_step(batch).item()
-                        self.log('val_loss', val_loss)
-                self.log('avg_loss',
-                         sum(self._log_dict['val_loss']) / len(self._log_dict['val_loss']))
+                        loss = self.test_step(batch).item()
+                        self.log('val_loss', loss)
+                val_loss = self._log_dict['val_loss'][-len(val_loader):]
+                val_loss = sum(val_loss) / len(val_loss)
+                self.log('avg_loss', val_loss)
 
             if early_stopping > 0:
                 if len(self._log_dict['avg_loss']) > early_stopping:
@@ -142,7 +142,8 @@ class TrainingModule:
                 recent_loss = sum(self._log_dict['train_loss']) / \
                     len(self._log_dict['train_loss'])
             if path is not None:
-                self.save(path, epoch, self._log_dict['avg_loss'][-1], save_attrs)
+                self.save(
+                    path, epoch, self._log_dict['avg_loss'][-1], save_attrs)
             self.on_epoch_end(self._log_dict)
             pbar.close()
 
