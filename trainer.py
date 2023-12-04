@@ -12,6 +12,8 @@ class NetworkTrainer(TrainingModule):
         self._model: ResNet = model
         self._pre_training = pre_training
         self._device = device
+        self._gpu_float_2 = torch.tensor(2, dtype=torch.float, device=self._device)
+        self._gpu_float_3 = torch.tensor(3, dtype=torch.float, device=self._device)
 
     def v_step(self, batch) -> float:
         state, value = batch
@@ -24,17 +26,19 @@ class NetworkTrainer(TrainingModule):
         return value_loss
 
     def pv_step(self, batch) -> float:
-        state, policy, value = batch
+        state, value, policy, legal_policy = batch
         state = state.to(self._device)
         policy = policy.to(self._device)
+        legal_policy = legal_policy.to(self._device)
         value = value.to(self._device)
-        value_hat, policy_hat = self._model(state)
+        policy_hat, value_hat = self._model(state)
         policy_hat = policy_hat.squeeze(1)
         value_hat = value_hat.squeeze(1)
+        policy_hat = torch.mul(policy_hat, legal_policy)
         value_loss = nn.functional.mse_loss(value_hat, value)
-        policy_loss = nn.functional.mse_loss(policy_hat, policy)
-        loss = (policy_loss + value_loss) / 2
-        del state, policy, value, policy_hat, value_hat, policy_loss, value_loss
+        policy_loss = nn.functional.cross_entropy(policy_hat, policy)
+        loss = torch.div(torch.add(policy_loss, value_loss), self._gpu_float_2)
+        del state, policy, value, policy_hat, value_hat, policy_loss, value_loss, legal_policy
         return loss
 
     def training_step(self, batch):
