@@ -86,6 +86,7 @@ class TrainingModule:
             max_epochs = sys.maxsize ** 10
 
         recent_loss = 0
+        no_improve = 0
         for epoch in range(start_epoch+1, max_epochs+1):
             pbar = tqdm(desc=f'Epoch {epoch}', leave=False,
                         dynamic_ncols=True, total=len(train_loader))
@@ -108,7 +109,8 @@ class TrainingModule:
                     f'Epoch {epoch}, lr: {lr}')
 
                 if len(self._log_dict['train_loss']) > len(train_loader):
-                    train_loss = sum(self._log_dict['train_loss'][-len(train_loader):])
+                    train_loss = sum(
+                        self._log_dict['train_loss'][-len(train_loader):])
                     train_loss /= len(train_loader)
                 else:
                     train_loss = sum(self._log_dict['train_loss'])
@@ -128,16 +130,6 @@ class TrainingModule:
                 val_loss = sum(val_loss) / len(val_loss)
                 self.log('avg_loss', val_loss)
 
-            if early_stopping > 0:
-                if len(self._log_dict['avg_loss']) > early_stopping:
-                    if self._log_dict['avg_loss'][-1] > np.all(self._log_dict['avg_loss'][-(early_stopping+1):-2]):
-                        break
-
-            if reduece_on_plateau:
-                if len(self._log_dict['avg_loss']) > 1:
-                    if self._log_dict['avg_loss'][-1] > self._log_dict['avg_loss'][-2]:
-                        self.reduce_scheduler_lr()
-
             if recent_loss == 0:
                 recent_loss = sum(self._log_dict['train_loss']) / \
                     len(self._log_dict['train_loss'])
@@ -154,12 +146,26 @@ class TrainingModule:
             fig, ax = plt.subplots()
             ax.plot(loss)
             ax.set_xlabel('Batch')
-            # ax.set_ylabel('Loss')
+            ax.set_ylabel('Loss')
             if log_plot:
                 ax.set_yscale('log')
             ax.set_title('Training Loss')
             plt.savefig(f'{path}training_loss.pdf')
             plt.close()
+
+            if early_stopping > 0:
+                if len(self._log_dict['avg_loss']) > early_stopping:
+                    if self._log_dict['avg_loss'][-1] > np.all(self._log_dict['avg_loss'][-(early_stopping+1):-1]):
+                        no_improve += 1
+                        if no_improve >= early_stopping:
+                            break
+                    else:
+                        no_improve = 0
+
+            if reduece_on_plateau:
+                if len(self._log_dict['avg_loss']) > 1:
+                    if self._log_dict['avg_loss'][-1] > self._log_dict['avg_loss'][-2]:
+                        self.reduce_scheduler_lr()
 
             # load best model
             if path is not None:

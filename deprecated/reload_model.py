@@ -1,15 +1,14 @@
 import numpy as np
 import torch
 import resnet
-import resnet_old
 import torch_directml
 
 device = torch_directml.device()
-model_dict = torch.load("v_only.pth")
+model_dict = torch.load("models/v_only.pth")
 model = resnet.ResNet(10, 128, 9, 1968)
 model.load_state_dict(model_dict["model_state_dict"])
-model.half()
-model.dtype = torch.float16
+# model.half()
+# model.dtype = torch.float16
 model.eval()
 model.to(device)
 
@@ -37,4 +36,4 @@ torch.save({
     'disable_policy': True,
     'squeeze_and_excitation': False,
     'policy_size': 1968,
-}, f'model.pth')
+}, f'models/model.pth')

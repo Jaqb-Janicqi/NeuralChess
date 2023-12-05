@@ -9,8 +9,6 @@ import time
 import io
 import torch
 
-from mcts_node import Node
-# from mcts_node_ext import Node
 import multiprocessing as mp
 from actionspace import ActionSpace as asp
 from helper_functions import *
@@ -19,9 +17,9 @@ import psutil
 
 
 UINT32_MAX = 2**32 - 1
-MAX_MEM_USAGE = 10.5*1024*1024*1024   # xGB
-DUMP_SIZE = int(1e3)
-DUMP_QUEUE_SIZE = int(5e4)
+MAX_MEM_USAGE = 10*1024*1024*1024   # xGB
+DUMP_SIZE = int(1e2)
+DUMP_QUEUE_SIZE = int(1e6)
 COMMIT_SIZE = int(1e4)
 FILE_START = 0
 FILE_END = None
@@ -111,7 +109,7 @@ def fix_db(db_path):
     conn.close()
 
 
-def process_game(line, actionspace: asp, db_dict, verbose=True, rotate=True):
+def process_game(line, actionspace: asp, db_dict, verbose=True, rotate=True, white_pov=False):
     try:
         pgn = io.StringIO(line)
         game = chess.pgn.read_game(pgn)
@@ -119,7 +117,6 @@ def process_game(line, actionspace: asp, db_dict, verbose=True, rotate=True):
             return
         if game.next() is None:
             return
-        node = Node(1, game.board(), actionspace, None, None)
         # game = game.next()  # skip starting position
         while True:
             move_made = game.next().move
@@ -138,9 +135,12 @@ def process_game(line, actionspace: asp, db_dict, verbose=True, rotate=True):
             if cp is None:
                 cp = 0
             else:
-                cp = cp.relative.score(mate_score=12800)
+                if white_pov:
+                    cp = cp.white().score(mate_score=12800)
+                else:
+                    cp = cp.relative.score(mate_score=12800)
             value = map_centipawns_to_probability(cp)
-            encoded = encode_a85(node.encoded.astype(np.int8).tobytes())
+            encoded = encode_a85(decode_from_fen_no_color_plane_pieces_only(fen))
 
             if encoded in db_dict:
                 db_dict[encoded].update(
@@ -160,17 +160,13 @@ def process_game(line, actionspace: asp, db_dict, verbose=True, rotate=True):
                 return
             if not game.next():
                 return
-            # update the tree
-            node.add_child(game.move)
-            children = node.children
-            node = children[actionspace.get_key(game.move)]
     except Exception as e:
         if verbose:
             print(e)
             print(line)
 
 
-def parse_worker(shard_path, queue: mp.Queue, rotate):
+def parse_worker(shard_path, queue: mp.Queue, rotate, absolute_score):
     db_dict = OrderedDict()
     actionspace = asp()
     skip_game = False
@@ -205,7 +201,7 @@ def parse_worker(shard_path, queue: mp.Queue, rotate):
                     skip_game = False
                     continue
                 if '[%eval' in line:
-                    process_game(line, actionspace, db_dict, rotate=rotate)
+                    process_game(line, actionspace, db_dict, rotate=rotate, white_pov=absolute_score)
 
     # dump items
     for _ in range(len(db_dict)):
@@ -301,6 +297,7 @@ def data_worker(parser_queue: mp.Queue, db_queue: mp.Queue):
 
 def parse(shard_path) -> None:
     rotate_board = False
+    absolute_score = True
     tic = time.time()
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -339,7 +336,7 @@ def parse(shard_path) -> None:
         for file in files:
             if file.endswith(".pgn"):
                 pool.apply_async(parse_worker, args=(
-                    shard_path + file, parser_queue, rotate_board), callback=lambda _: pbar.update())
+                    shard_path + file, parser_queue, rotate_board, absolute_score), callback=lambda _: pbar.update())
         pool.close()
         pool.join()
     pbar.close()
@@ -407,11 +404,11 @@ def count():
     conn.close()
 
 
-db_path = 'C:/sqlite_chess_db/lichess2200.db'
+db_path = 'C:/sqlite_chess_db/lichess2200_whitepov.db'
 
 if __name__ == '__main__':
     # fix_db(db_path)
-    count()
+    # count()
     # display()
-    # parse('E:/lichess_shards/lichess_db_standard_rated_2023-9/')
+    parse('E:/lichess_shards/lichess_db_standard_rated_2023-9/')
     # parse('E:/lichess_shards/lichess_db_standard_rated_2023-10/')
