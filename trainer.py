@@ -1,7 +1,7 @@
-from training_module import TrainingModule
+from fast_torch.training_module import TrainingModule
 import torch.nn as nn
-from scheduler import Scheduler
-from resnet import ResNet
+from fast_torch.scheduler import Scheduler
+from resnet.resnet import ResNet
 import torch
 torch.manual_seed(0)
 
@@ -84,7 +84,7 @@ class NetworkTrainer(TrainingModule):
         optimizer = torch.optim.AdamW(
             self._model.parameters(),
             lr=1e-3,
-            weight_decay=1e-2,
+            weight_decay=1e-6,
             # betas=(0.85, 0.95),
             amsgrad=True,
         )

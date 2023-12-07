@@ -14,8 +14,6 @@ import sys
 import numpy as np
 import torch
 import optuna
-
-from mcts_node import Node
 torch.manual_seed(0)
 
 
@@ -52,21 +50,6 @@ class TrainingModule:
         loss = F.cross_entropy(y_hat, y)
         del x, y, y_hat
         return loss
-
-    def convert_batch(self, batch):
-        fens, labels = batch
-        encoded = []
-        for fen in fens[0]:
-            state = chess.Board(fen)
-            node = Node(1, state, {})
-            encoded.append(node.encoded)
-        new_labels = []
-        encoded = np.array(encoded)
-        labels = np.array(labels[0])
-        encoded = torch.tensor(encoded).float().to(self._device)
-        labels = torch.tensor(labels).float().to(self._device)
-        batch = (encoded, labels)
-        return batch
 
     def fit(self, train_loader, val_loader=None, max_epochs=None, early_stopping=0,
             save_attrs={}, path=None, resume_model_path=None, log_plot=False,

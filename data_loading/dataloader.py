@@ -5,30 +5,7 @@ import sys
 import numpy as np
 import torch
 import chess
-from actionspace import ActionSpace
-
-
-ASPACE = ActionSpace()
-
-
-class bit_array():
-    def __init__(self, size: int) -> None:
-        self.__size = size
-        self.__bit_array = np.zeros(
-            np.ceil(size/64).astype(np.uint64), dtype=np.uint64)
-
-    def __getitem__(self, index: int) -> bool:
-        if index >= self.__size:
-            raise IndexError("Index out of range")
-        return bool(self.__bit_array[index//64] & np.uint64(1 << (index % 64)))
-
-    def __setitem__(self, index: int, value: bool) -> None:
-        if index >= self.__size:
-            raise IndexError("Index out of range")
-        if value:
-            self.__bit_array[index//64] |= np.uint64(1 << (index % 64))
-        else:
-            self.__bit_array[index//64] &= np.uint64(~(1 << (index % 64)))
+from data_loading.bitarray import BitArray
 
 
 class DataLoader(mp.Process):
@@ -80,7 +57,7 @@ class DataLoader(mp.Process):
             self.__num_batches = sys.maxsize ** 10
         self.__idx_drawn = 0
         if not self.__replace:
-            self.__replace_masker = bit_array(self.__mask_range)
+            self.__replace_masker = BitArray(self.__mask_range)
         self.__last_idx = 0
         self.__idx_drawn = 0
         self.__last_idx_checked = self.__min_index
@@ -97,14 +74,14 @@ class DataLoader(mp.Process):
                 self.__specials_query_pos[row[1]] = row[0]
             if row[1] in self.__output_columns:
                 self.__data_col_pos[row[1]] = row[0]
-        
-        ##############################################
-        # add legal policy
-        if 'policy' in self.__output_columns:
-            self.__num_query_cols += 1
-            self.__data_col_pos['legal_policy'] = self.__num_query_cols - 1
-            self.__output_columns.append('legal_policy')
-        ##############################################
+
+        # ##############################################
+        # # add legal policy
+        # if 'policy' in self.__output_columns:
+        #     self.__num_query_cols += 1
+        #     self.__data_col_pos['legal_policy'] = self.__num_query_cols - 1
+        #     self.__output_columns.append('legal_policy')
+        # ##############################################
 
     def __setup_attrs(self):
         if self.__max_index == 0:
@@ -173,12 +150,13 @@ class DataLoader(mp.Process):
             # convert slice to list of lists
             slc = [list(row) for row in slc]
 
-            ##############################################
-            # create legal policy
-            if 'policy' in self.__output_columns:
-                for row in slc:
-                    row.append(self.get_legal_policy(row[self.__data_col_pos['fen']]))
-            ##############################################
+            # ##############################################
+            # # create legal policy
+            # if 'policy' in self.__output_columns:
+            #     for row in slc:
+            #         row.append(self.get_legal_policy(
+            #             row[self.__data_col_pos['fen']]))
+            # ##############################################
 
             if self.__specials:
                 for key, func in self.__specials.items():
@@ -197,7 +175,7 @@ class DataLoader(mp.Process):
         tmp = [[] for _ in range(self.__num_query_cols)]
         for row in batch:
             for i, col in enumerate(row):
-                tmp[i].append(col)        
+                tmp[i].append(col)
 
         batch = []
         if self.__to_tensor:
@@ -292,13 +270,13 @@ class DataLoader(mp.Process):
     def dataset(self):
         return self
 
-    def get_legal_policy(self, fen):
-        board = chess.Board(fen)
-        legal_moves = board.legal_moves
-        legal_policy = np.zeros(ASPACE.size, dtype=np.float32)
-        for move in legal_moves:
-            legal_policy[ASPACE.get_key(move)] = 1
-        return legal_policy
+    # def get_legal_policy(self, fen):
+    #     board = chess.Board(fen)
+    #     legal_moves = board.legal_moves
+    #     legal_policy = np.zeros(ASPACE.size, dtype=np.float32)
+    #     for move in legal_moves:
+    #         legal_policy[ASPACE.get_key(move)] = 1
+    #     return legal_policy
 
 
 def convert_to_numpy(arr):
@@ -306,35 +284,6 @@ def convert_to_numpy(arr):
 
 
 if __name__ == "__main__":
-    conn = sqlite3.connect('C:/sqlite_chess_db/lichess.db')
-    db_size = conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0]
-    conn.close()
-    db_checked = 22547088
-    x = (db_checked - 1) // 64
-
-    tmp = DataLoader(
-        db_path='C:/sqlite_chess_db/lichess.db',
-        table_name='positions',
-        num_batches=2000,
-        batch_size=1024,
-        min_index=1,
-        max_index=db_size*0.8,
-        random=True,
-        replace=False,
-        shuffle=True,
-        slice_size=64,
-        specials={'encoded': convert_to_numpy},
-        data_cols=['encoded'],
-        label_cols=['prob']
-    )
-    tmp.start()
-    corrupt = 0
-    bnum = 0
-    for batch in tmp:
-        print(bnum)
-        x, y = batch
-        if x.shape[0] == 0 or y.shape[0] == 0:
-            corrupt += 1
-        bnum += 1
-    print()
-    print(corrupt)
+    bitarr = BitArray(100)
+    bitarr[0] = 1
+    bitarr[1] = 1

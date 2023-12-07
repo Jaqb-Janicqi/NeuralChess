@@ -1,6 +1,6 @@
 from copy import deepcopy
-from se_resblock import SeResBlock
-from resblock import ResBlock
+from resnet.se_resblock import SeResBlock
+from resnet.resblock import ResBlock
 import torch
 import torch.nn as nn
 

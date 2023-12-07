@@ -8,11 +8,11 @@ num_searches: 4000
 # Lower Values (e.g., 0.5 - 1.0) may result in deeper search of the most promising lines, improving accuracy.
 # Higher Values (e.g., 10 - 100) may result in less accurate, but more diverse and interesting play.
 # default: 1000
-c_puct: 500
+c_puct: 250
 
 # model_path - path to your NN model.
 # default: model.pt
-model_path: models/model.pth
+model_path: models/v_only.pth
 
 # cache_size: size of the internal inference cache in Mb.
 # The engine stores results of inference in an internal cache.
@@ -25,4 +25,4 @@ cache_size: 4096
 # model precision
 # supported: 16, 32
 # default: 32
-precision: 16
+precision: 32

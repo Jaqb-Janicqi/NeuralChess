@@ -66,7 +66,7 @@ class ActionSpace():
             self._add(action)
 
     def __save(self) -> None:
-        with open("actionspace.txt", "w") as f:
+        with open("actionspace/actionspace.txt", "w") as f:
             for i in range(self.__size):
                 f.write(f"{self.__actionspace[i]}\n")
 

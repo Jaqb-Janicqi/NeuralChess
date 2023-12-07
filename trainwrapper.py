@@ -2,19 +2,14 @@ import os
 import sqlite3
 import torch
 import yaml
-import tqdm
 
 import numpy as np
 import torch_directml as dml
-from cache_read_priority import Cache
-from db_dataloader import DataLoader
-from mcts import MCTS
-from resnet import ResNet
-from actionspace import ActionSpace
-import sys
+from data_loading.dataloader import DataLoader
+from resnet.resnet import ResNet
+from actionspace.actionspace import ActionSpace
 from trainer import NetworkTrainer
-from helper_functions import *
-from chess_model import ChessModel
+from helper.helper_functions import *
 
 
 def convert_to_numpy(arr):
@@ -53,14 +48,14 @@ class TrainWrapper():
         resume_training = True
         db_size = self.get_db_size()
         b_size = int(512*8)
-        slice_size = int(b_size/8)
+        slice_size = int(512)
         dataloader = DataLoader(
             db_path=self.__training_args['db_path'],
             table_name='positions',
-            num_batches=100,
+            num_batches=200,
             batch_size=b_size,
             min_index=1,
-            max_index=db_size*0.95,
+            max_index=db_size,
             random=True,
             replace=False,
             shuffle=False,
@@ -68,7 +63,7 @@ class TrainWrapper():
             output_columns=['fen', 'cp'],
             to_tensor=True,
             specials={
-                'fen': decode_from_fen_sparse,
+                'fen': decode_from_fen,
                 'cp': cp_to_value_clip
             },
             use_offsets=False
@@ -77,7 +72,7 @@ class TrainWrapper():
         val_dataloader = DataLoader(
             db_path=self.__training_args['db_path'],
             table_name='positions',
-            num_batches=50,
+            num_batches=100,
             batch_size=b_size,
             min_index=db_size*0.95,
             max_index=db_size,
@@ -88,7 +83,7 @@ class TrainWrapper():
             output_columns=['fen', 'cp'],
             to_tensor=True,
             specials={
-                'fen': decode_from_fen_sparse,
+                'fen': decode_from_fen,
                 'cp': cp_to_value_clip
             },
             use_offsets=False
@@ -106,7 +101,7 @@ class TrainWrapper():
         model.disable_policy()
         model.to(self.__device)
         trainer = NetworkTrainer(model, True, self.__device)
-        path = 'models_'
+        path = 'model_files/models_'
         path += str(self.__training_args['input_features'])
         path += "_"
         path += str(self.__training_args['num_blocks'])
@@ -122,10 +117,10 @@ class TrainWrapper():
             if len(os.listdir(path)) == 0:
                 resume_training = False
 
-        trainer.fit(dataloader, val_dataloader, 300, 5, path=path, save_attrs=model_attrs,
+        trainer.fit(dataloader, max_epochs=150, early_stopping=10, path=path, save_attrs=model_attrs,
                     resume=resume_training, resume_optimizer=False, log_plot=True)
 
-    def get_db_size(self):
+    def get_db_size_old(self):
         db_name = os.path.basename(self.__training_args['db_path'])
         if os.path.exists(f"db_size_{db_name}.txt"):
             with open(f"db_size_{db_name}.txt", "r") as db_size_file:
@@ -139,6 +134,25 @@ class TrainWrapper():
             db_name = os.path.basename(self.__training_args['db_path'])
             with open(f"db_size_{db_name}.txt", "w") as db_size_file:
                 db_size_file.write(str(db_size))
+        return db_size
+    
+    def get_db_size(self):
+        db_name = os.path.basename(self.__training_args['db_path'])
+        if os.path.exists(f"data_loading/db_size.yaml"):
+            with open(f"data_loading/db_size.yaml", "r") as db_size_file:
+                db_size_dict = yaml.safe_load(db_size_file)
+        else:
+            db_size_dict = {}
+        if db_name in db_size_dict:
+            db_size = db_size_dict[db_name]
+        else:
+            conn = sqlite3.connect(self.__training_args['db_path'])
+            db_size = conn.execute(
+                "SELECT COUNT(*) FROM positions").fetchone()[0]
+            conn.close()
+            db_size_dict[db_name] = db_size
+            with open(f"data_loading/db_size.yaml", "w") as db_size_file:
+                yaml.dump(db_size_dict, db_size_file)
         return db_size
 
     def find_lr(self):
@@ -220,7 +234,8 @@ class TrainWrapper():
             policy_size=self.__action_space.size,
             device=self.__device
         )
-        checkpoint = torch.torch.load("models_15_6_64/model_299_0.037531253133525344.pth")
+        checkpoint = torch.torch.load(
+            "models_15_8_96/model_24_0.00393247862579301.pth")
         model.load_state_dict(checkpoint['model_state_dict'])
         model.disable_policy()
         model.to(self.__device)
@@ -235,7 +250,7 @@ class TrainWrapper():
                 conn.close()
                 id, enc, fen, cp, policy, value, samples, legal_moves = db_slice[0]
                 value = cp_to_value_clip(cp)
-                m_in = decode_from_fen_sparse(fen)
+                m_in = decode_from_fen(fen)
                 m_in = torch.tensor(m_in).unsqueeze(0)
                 m_in = m_in.to(self.__device)
                 v_hat = model(m_in)
@@ -278,7 +293,7 @@ class TrainWrapper():
         resume_training = True
         db_size = self.get_db_size()
         b_size = int(512*8)
-        slice_size = int(b_size/8)
+        slice_size = int(b_size)
         dataloader = DataLoader(
             db_path=self.__training_args['db_path'],
             table_name='positions',
@@ -293,7 +308,7 @@ class TrainWrapper():
             output_columns=['fen', 'cp', 'policy'],
             to_tensor=True,
             specials={
-                'fen': decode_from_fen_sparse,
+                'fen': decode_from_fen,
                 'cp': cp_to_value_clip,
                 'policy': decode_policy
             },
@@ -314,7 +329,7 @@ class TrainWrapper():
             output_columns=['fen', 'cp', 'policy'],
             to_tensor=True,
             specials={
-                'fen': decode_from_fen_sparse,
+                'fen': decode_from_fen,
                 'cp': cp_to_value_clip,
                 'policy': decode_policy
             },
@@ -348,7 +363,7 @@ class TrainWrapper():
             if len(os.listdir(path)) == 0:
                 resume_training = False
 
-        trainer.fit(dataloader, val_dataloader, 300, 5, path=path, save_attrs=model_attrs,
+        trainer.fit(dataloader, val_dataloader, 100, 5, path=path, save_attrs=model_attrs,
                     resume=resume_training, resume_optimizer=False, log_plot=True)
 
 
@@ -357,6 +372,6 @@ if __name__ == "__main__":
     # az.find_lr()
     # az.load_and_print_params()
     # az.find_params()
-    # az.train_value()
+    az.train_value()
     # az.predict()
-    az.train_all()
+    # az.train_all()
