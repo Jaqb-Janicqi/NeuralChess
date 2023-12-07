@@ -18,8 +18,8 @@ DUMP_SIZE = int(1e2)
 DUMP_QUEUE_SIZE = int(1e6)
 COMMIT_SIZE = int(1e4)
 FILE_START = 0
-FILE_END = None
-# FILE_END = 4
+# FILE_END = None
+FILE_END = 2000
 DBPATH = 'C:/sqlite_chess_db/lichess_evals.db'
 
 
