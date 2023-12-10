@@ -10,11 +10,10 @@ import torch
 import torch_directml
 import yaml
 
-from actionspace import ActionSpace
-from cache_read_priority import Cache
-from mcts import MCTS
-from resnet import ResNet
-import cProfile
+from actionspace.actionspace import ActionSpace
+from cache.cache_read_priority import Cache
+from mcts.mcts import MCTS
+from resnet.resnet import ResNet
 
 
 class Engine():
@@ -250,9 +249,11 @@ class Engine():
             # check if command can be split
             if ' ' not in input_str:
                 continue
-            pushmove = "".join(input_str.split(maxsplit=1)[0])
-            if pushmove in self.__ponder_stoppers:
+            command = input_str.split()
+            if command[0] in self.__ponder_stoppers:
                 self.__search_interrupt.set()
+                if command[-1].isdigit():
+                    self.__go_args["movetime"] = float(command[-1])
                 break
 
         # stop the search
