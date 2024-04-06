@@ -8,7 +8,7 @@ import torch_directml as dml
 from data_loading.dataloader import DataLoader
 from resnet.resnet import ResNet
 from actionspace.actionspace import ActionSpace
-from trainer import NetworkTrainer
+from training.trainer import NetworkTrainer
 from helper.helper_functions import *
 
 

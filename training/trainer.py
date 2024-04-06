@@ -67,18 +67,18 @@ class NetworkTrainer(TrainingModule):
         )
         self._optimizers['optimizer'] = optimizer
         self._step_list.append(self._optimizers['optimizer'])
-        # scheduler = Scheduler(
-        #     optimizer=optimizer,
-        #     num_steps=self.steps_per_epoch,
-        #     max_lr=1e-4,
-        #     min_lr=1e-6,
-        #     pct_start=0.05,
-        #     pct_max=0,
-        #     annealing='cosine',
-        #     conditional_wd=False
-        # )
-        # self._schedulers['scheduler'] = scheduler
-        # self._step_list.append(scheduler)
+        scheduler = Scheduler(
+            optimizer=optimizer,
+            num_steps=self.steps_per_epoch,
+            max_lr=1e-4,
+            min_lr=1e-6,
+            pct_start=0.05,
+            pct_max=0,
+            annealing='cosine',
+            conditional_wd=False
+        )
+        self._schedulers['scheduler'] = scheduler
+        self._step_list.append(scheduler)
 
     def adamw(self):
         optimizer = torch.optim.AdamW(
@@ -90,17 +90,17 @@ class NetworkTrainer(TrainingModule):
         )
         self._optimizers['optimizer'] = optimizer
         self._step_list.append(self._optimizers['optimizer'])
-        # scheduler = Scheduler(
-        #     optimizer=optimizer,
-        #     num_steps=self.steps_per_epoch,
-        #     max_lr=1e-6,
-        #     min_lr=1e-8,
-        #     pct_start=0.05,
-        #     pct_max=0.05,
-        #     annealing='cosine',
-        # )
-        # self._schedulers['scheduler'] = scheduler
-        # self._step_list.append(scheduler)
+        scheduler = Scheduler(
+            optimizer=optimizer,
+            num_steps=self.steps_per_epoch,
+            max_lr=1e-6,
+            min_lr=1e-8,
+            pct_start=0.05,
+            pct_max=0.05,
+            annealing='cosine',
+        )
+        self._schedulers['scheduler'] = scheduler
+        self._step_list.append(scheduler)
 
     def rms(self):
         optimizer = torch.optim.RMSprop(
