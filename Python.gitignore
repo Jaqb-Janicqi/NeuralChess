@@ -1,6 +1,9 @@
 # cache
 __pycache__
 
+# vscode
+.vscode
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
