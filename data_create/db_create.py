@@ -10,8 +10,8 @@ import io
 import torch
 
 import multiprocessing as mp
-from actionspace import ActionSpace as asp
-from helper_functions import *
+from actionspace.actionspace import ActionSpace as asp
+from helper.helper_functions import *
 from collections import OrderedDict
 import psutil
 
@@ -140,7 +140,7 @@ def process_game(line, actionspace: asp, db_dict, verbose=True, rotate=True, whi
                 else:
                     cp = cp.relative.score(mate_score=12800)
             value = map_centipawns_to_probability(cp)
-            encoded = encode_a85(decode_from_fen_no_color_plane_pieces_only(fen))
+            encoded = encode_a85(decode_from_fen(fen))
 
             if encoded in db_dict:
                 db_dict[encoded].update(

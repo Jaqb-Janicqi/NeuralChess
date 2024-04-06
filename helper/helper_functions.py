@@ -1,7 +1,6 @@
 import base64
 import math
 import numpy as np
-import torch
 import chess
 
 

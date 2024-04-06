@@ -4,7 +4,6 @@ import multiprocessing as mp
 import sys
 import numpy as np
 import torch
-import chess
 from data_loading.bitarray import BitArray
 
 
@@ -75,14 +74,6 @@ class DataLoader(mp.Process):
             if row[1] in self.__output_columns:
                 self.__data_col_pos[row[1]] = row[0]
 
-        # ##############################################
-        # # add legal policy
-        # if 'policy' in self.__output_columns:
-        #     self.__num_query_cols += 1
-        #     self.__data_col_pos['legal_policy'] = self.__num_query_cols - 1
-        #     self.__output_columns.append('legal_policy')
-        # ##############################################
-
     def __setup_attrs(self):
         if self.__max_index == 0:
             conn = sqlite3.connect(self.__db_path)
@@ -149,14 +140,6 @@ class DataLoader(mp.Process):
 
             # convert slice to list of lists
             slc = [list(row) for row in slc]
-
-            # ##############################################
-            # # create legal policy
-            # if 'policy' in self.__output_columns:
-            #     for row in slc:
-            #         row.append(self.get_legal_policy(
-            #             row[self.__data_col_pos['fen']]))
-            # ##############################################
 
             if self.__specials:
                 for key, func in self.__specials.items():
@@ -270,20 +253,6 @@ class DataLoader(mp.Process):
     def dataset(self):
         return self
 
-    # def get_legal_policy(self, fen):
-    #     board = chess.Board(fen)
-    #     legal_moves = board.legal_moves
-    #     legal_policy = np.zeros(ASPACE.size, dtype=np.float32)
-    #     for move in legal_moves:
-    #         legal_policy[ASPACE.get_key(move)] = 1
-    #     return legal_policy
-
 
 def convert_to_numpy(arr):
     return np.frombuffer(arr, dtype=np.float32).reshape(16, 8, 8)
-
-
-if __name__ == "__main__":
-    bitarr = BitArray(100)
-    bitarr[0] = 1
-    bitarr[1] = 1

@@ -1,6 +1,6 @@
-from fast_torch.training_module import TrainingModule
+from training.training_module import TrainingModule
 import torch.nn as nn
-from fast_torch.scheduler import Scheduler
+from training.scheduler import Scheduler
 from resnet.resnet import ResNet
 import torch
 torch.manual_seed(0)
