@@ -18,7 +18,7 @@ class Scheduler():
         self.__step_num = 0
         self.restart()
 
-    def lr_function(self, x):
+    def lr_function(self, x, to_min=False):
         if x <= self.__num_steps * self.__pct_start and self.__pct_start > 0:
             # increase the learning rate up to max_lr starting at min_lr
             lr_range = self.__max_lr - self.__min_lr
@@ -30,22 +30,41 @@ class Scheduler():
             return self.__max_lr
         else:
             # decrease the learning rate down to 0
-            if self.__annealing == 'cosine':
-                # cosine annealing
-                top = (x - (self.__pct_start + self.__pct_max)
-                       * self.__num_steps) * np.pi
-                bottom = (1 - (self.__pct_start + self.__pct_max)) * \
-                    self.__num_steps
-                return self.__max_lr * (1 + np.cos(top / bottom)) / 2
-            elif self.__annealing == 'linear':
-                # linear annealing
-                top = (x - (self.__pct_start + self.__pct_max) * self.__num_steps)
-                bottom = ((1 - (self.__pct_start + self.__pct_max))
-                          * self.__num_steps)
-                return self.__max_lr * (1 - top / bottom)
+            if to_min:
+                # decrease the learning rate down to min_lr
+                if self.__annealing == 'cosine':
+                    # cosine annealing
+                    top = (x - (self.__pct_start + self.__pct_max)
+                        * self.__num_steps) * np.pi
+                    bottom = (1 - (self.__pct_start + self.__pct_max)) * \
+                        self.__num_steps
+                    return max(self.__max_lr * (1 + np.cos(top / bottom)) / 2, self.__min_lr)
+                elif self.__annealing == 'linear':
+                    # linear annealing
+                    top = (x - (self.__pct_start + self.__pct_max) * self.__num_steps)
+                    bottom = ((1 - (self.__pct_start + self.__pct_max))
+                            * self.__num_steps)
+                    return max(self.__max_lr * (1 - top / bottom), self.__min_lr)
+                else:
+                    raise ValueError(
+                        f"annealing must be either 'cosine' or 'linear', not {self.__annealing}")
             else:
-                raise ValueError(
-                    f"annealing must be either 'cosine' or 'linear', not {self.__annealing}")
+                if self.__annealing == 'cosine':
+                    # cosine annealing
+                    top = (x - (self.__pct_start + self.__pct_max)
+                        * self.__num_steps) * np.pi
+                    bottom = (1 - (self.__pct_start + self.__pct_max)) * \
+                        self.__num_steps
+                    return self.__max_lr * (1 + np.cos(top / bottom)) / 2
+                elif self.__annealing == 'linear':
+                    # linear annealing
+                    top = (x - (self.__pct_start + self.__pct_max) * self.__num_steps)
+                    bottom = ((1 - (self.__pct_start + self.__pct_max))
+                            * self.__num_steps)
+                    return self.__max_lr * (1 - top / bottom)
+                else:
+                    raise ValueError(
+                        f"annealing must be either 'cosine' or 'linear', not {self.__annealing}")
 
     def step(self):
         self.__step_num += 1
