@@ -1,7 +1,7 @@
 import numpy as np
 import chess
-from actionspace import ActionSpace as asp
-from helper_functions import bb_to_matrix
+from actionspace.actionspace import ActionSpace as asp
+from helper.helper_functions import bb_to_matrix
 
 
 class Node():
@@ -97,7 +97,6 @@ class Node():
     def best_child(self):
         child_values = self.children_q + self.children_u
         child_values[self.__illegal_mask] = -np.inf
-        # 1800nps, 10k nodes
         return np.argmax(child_values + self.__child_virtual_loss)
 
     @property

@@ -69,44 +69,19 @@ class Engine():
         # initialize action space
         self.__action_space = ActionSpace()
         self.__model = None
-        self.__use_model_policy = False
 
         if os.path.exists(self.__args["model_path"]):
             try:
                 self.__model_dict = torch.load(
                     self.__args["model_path"])
-                if "policy_size" not in self.__model_dict:
-                    self.__use_model_policy = False
-                else:
-                    if self.__action_space.size != self.__model_dict["policy_size"]:
-                        raise Exception("Incompatible model")
-                    self.__use_model_policy = True
                 self.__model = ResNet(
                     num_blocks=self.__model_dict["num_blocks"],
                     num_features=self.__model_dict["num_features"],
                     num_input_features=self.__model_dict["num_input_features"],
-                    policy_size=self.__action_space.size,
                     squeeze_and_excitation=self.__model_dict["squeeze_and_excitation"]
                 )
                 self.__model.load_state_dict(
                     self.__model_dict["model_state_dict"])
-                if "disable_policy" in self.__model_dict:
-                    if self.__model_dict["disable_policy"]:
-                        self.__model.disable_policy()
-                        self.__use_model_policy = False
-                    else:
-                        self.__model.enable_policy()
-                        self.__use_model_policy = True
-                else:
-                    self.__model.disable_policy()
-                    self.__use_model_policy = False
-                precision = self.__args["precision"]
-                if precision == 32:
-                    self.__model.dtype = torch.float32
-                elif precision == 16:
-                    self.__model.dtype = torch.float16
-                else:
-                    raise Exception("Incompatible precision")
 
                 self.__model.to(self.__device)
                 self.__model.eval()
@@ -117,12 +92,14 @@ class Engine():
                     print("info Incompatible model")
                 else:
                     print("Model corrupted or has wrong structure")
+        else: # model not found
+            print("info Model not found")
+
         self.__mcts = MCTS(
             self.__args["c_puct"],
             self.__action_space,
             Cache(self.__args["cache_size"]),
-            self.__model,
-            use_model_policy=self.__use_model_policy
+            self.__model
         )
 
         self.__default_go_args = {

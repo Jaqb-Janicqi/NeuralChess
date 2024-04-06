@@ -19,7 +19,6 @@ class ResNet(nn.Module):
         self.__num_blocks = kwargs.get("num_blocks")
         self.__num_features = kwargs.get("num_features")
         self.__num_input_features = kwargs.get("num_input_features")
-        self.__policy_size = kwargs.get("policy_size")
         self.__squeeze_and_excitation = kwargs.get("squeeze_and_excitation")
         self.__weight_init_mode = kwargs.get("weight_init_mode")
         self.__disable_policy = False
@@ -42,16 +41,7 @@ class ResNet(nn.Module):
                 [ResBlock(self.__num_features, dtype=self.__dtype)
                  for _ in range(self.__num_blocks)]
             )
-        p_size, v_size = self.calculate_input_size()
-        self.policy = nn.Sequential(
-            nn.Conv2d(self.__num_features, self.__num_features,
-                      1, dtype=self.__dtype),
-            nn.Conv2d(self.__num_features, 80, 1, dtype=self.__dtype),
-            nn.ReLU(inplace=True),
-            nn.Flatten(),
-            nn.Linear(p_size, self.__policy_size, dtype=self.__dtype),
-            nn.Softmax(dim=1)
-        )
+        v_size = self.calculate_value_input_size()
         self.value = nn.Sequential(
             nn.Conv2d(self.__num_features, int(
                 self.__num_features/2), 1, dtype=self.__dtype),
@@ -68,20 +58,13 @@ class ResNet(nn.Module):
         x = self.start_block(x)
         for block in self.blocks:
             x = block(x)
-        v = self.value(x)
-        if self.__disable_policy:
-            return v
-        p = self.policy(x)
-        return p, v
+        return self.value(x)
 
     def to_tensor(self, data):
         return torch.tensor(data).to(self.dtype).unsqueeze(0).to(self.__device)
 
     def batch_to_tensor(self, data):
         return torch.tensor(data).to(self.dtype).to(self.__device)
-
-    def get_policy(self, p):
-        return p.detach().cpu().numpy()
 
     def get_value(self, v):
         return v.item()
@@ -126,15 +109,10 @@ class ResNet(nn.Module):
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
 
-    def calculate_input_size(self):
+    def calculate_value_input_size(self):
         x = torch.zeros((1, self.__num_input_features, 8, 8)).float()
         start_block_copy = deepcopy(self.start_block).float()
         blocks_copy = deepcopy(self.blocks).float()
-        p_seqence = nn.Sequential(
-            nn.Conv2d(self.__num_features, self.__num_features, 1),
-            nn.Conv2d(self.__num_features, 80, 1),
-            nn.Flatten(),
-        )
         v_seqence = nn.Sequential(
             nn.Conv2d(self.__num_features, int(self.__num_features/2), 1),
             nn.Flatten(),
@@ -143,9 +121,8 @@ class ResNet(nn.Module):
         x = start_block_copy(x)
         for block in blocks_copy:
             x = block(x)
-        p = p_seqence(x)
         v = v_seqence(x)
-        return p.shape[1], v.shape[1]
+        return v.shape[1]
 
     def disable_policy(self):
         self.__disable_policy = True

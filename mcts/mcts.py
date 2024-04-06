@@ -1,14 +1,14 @@
 import numpy as np
 import chess
 import torch
-from actionspace import ActionSpace as asp
-from mcts_node import Node
-from cache_read_priority import Cache
-from resnet import ResNet
+from actionspace.actionspace import ActionSpace as asp
+from mcts.mcts_node import Node
+from cache.cache_read_priority import Cache
+from resnet.resnet import ResNet
 
 
 class MCTS():
-    def __init__(self, c_puct, action_space, cache, model=None, use_model_policy=True) -> None:
+    def __init__(self, c_puct, action_space, cache, model=None) -> None:
         self.__c_puct: np.float32 = np.float32(c_puct)
         self.__action_space: asp = action_space
         self.__cache: Cache = cache
@@ -17,7 +17,6 @@ class MCTS():
         self.__depth_reached: int = 0
         self.__uniform_policy: np.ndarray = np.ones(
             self.__action_space.size) / self.__action_space.size
-        self.__use_model_policy: bool = use_model_policy
 
     def set_root(self, state: chess.Board) -> None:
         """Set the root node of the tree"""
@@ -32,11 +31,7 @@ class MCTS():
         else:
             with torch.no_grad():
                 m_out = self.__model(self.__model.to_tensor(node.encoded))
-                if self.__use_model_policy:
-                    policy, value = m_out[0], m_out[1]
-                    policy = self.__model.get_policy(policy)
-                else:
-                    policy, value = self.__uniform_policy, m_out
+                policy, value = self.__uniform_policy.copy(), m_out
             value = self.__model.get_value(value)
         return policy, value
 
@@ -44,7 +39,7 @@ class MCTS():
         """Performs one iteration of the MCTS algorithm"""
 
         node = self.__root
-        # select
+        # select node
         depth_reached = 0
         while node.is_expanded and depth_reached < max_depth:
             node = node.select()
@@ -59,10 +54,7 @@ class MCTS():
         elif node.is_terminal:
             value = 0
         else:
-            value = None
-
-        # expand if not terminal
-        if value is None:
+            # expand if not terminal
             if node.id in self.__cache:
                 policy, value = self.__cache[node.id]
             else:
