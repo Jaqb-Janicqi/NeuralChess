@@ -75,7 +75,7 @@ Selection:
 * position [fen <fenstring> | startpos ]  moves move1 .... movei\
     allows for passing a position in format of fen string or starting a new game
 
-* go\
+* go
 	* movetime \
 		search exactly x seconds.\
         If movetime is not given, the engine will adjust search time accordingly to total time it has left.
