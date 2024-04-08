@@ -480,13 +480,13 @@ class Engine():
         self.__autoponder = False
         print("info autoponder disabled")
 
-    def __deepblue(self) -> None:
-        """Handle deepblue command"""
+    def __ocb(self) -> None:
+        """Handle ocb command"""
 
         # acknowledge deepblue interface
         print("id name", self.__info["name"])
         print("id author", self.__info["author"])
-        print("deepblueok")
+        print("ocbok")
 
         # set ponder stoppers
         self.__ponder_stoppers = ["push", "stop"]
@@ -551,8 +551,8 @@ class Engine():
             command = self.__input_queue.get()
             if command == "uci":
                 self.__uci()
-            if command == "deepblue":
-                self.__deepblue()
+            if command == "ocb":
+                self.__ocb()
 
 
 if __name__ == "__main__":
