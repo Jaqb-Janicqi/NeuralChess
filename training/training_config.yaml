@@ -1,0 +1,11 @@
+# pre train
+c_puct_pre: 0 # 0
+db_path: 'C:/sqlite_chess_db/lichess_evals.db'
+# db_path: 'C:/sqlite_chess_db/lichess2200.db'
+# db_path: 'C:/sqlite_chess_db/lichess2200_whitepov.db'
+
+# model params
+input_features: 15
+num_blocks: 6
+num_features: 64
+squeeze_and_excitation: False

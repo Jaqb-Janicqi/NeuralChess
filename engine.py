@@ -1,39 +1,41 @@
-import cProfile
+from queue import Queue
 import math
 import os
-import select
 import sys
 import threading
-from contextlib import contextmanager
 from time import perf_counter, sleep
 
 import chess
 import torch
+import torch_directml
 import yaml
 
-from actionspace import ActionSpace
-from cache_read_priority import Cache
-from mcts import MCTS
-from resnet import ResNet
-from state import State
+from actionspace.actionspace import ActionSpace
+from cache.cache_read_priority import Cache
+from mcts.mcts import MCTS
+from resnet.resnet import ResNet
 
 
 class Engine():
-    def __init__(self, args=None, device="cpu") -> None:
-        self.__args = args
+    def __init__(self, device=torch.device("cpu")) -> None:
+        self.__args = None
         self.__device = device
         self.__info = {
             "name": "RoboHub",
             "author": "Jakub Janicki"
         }
-        self.__model_params = {
-            "num_blocks": 19,
-            "num_channels": 256
-        }
         self.__debug = False
         self.__infinity = sys.maxsize ** 10
         self.__input_interrupt = threading.Event()
         self.__search_interrupt = threading.Event()
+        self.__ponder_stoppers = []
+        self.__search_stoppers = []
+        self.__autoponder = False
+        self.__autopush = False
+        self.__input_queue = Queue()
+        self.__input_thread = threading.Thread(
+            target=self.__safe_input, daemon=True)
+        self.__input_thread.start()
 
         # select interface
         self.__read_init()
@@ -55,7 +57,7 @@ class Engine():
         if "model_path" not in self.__args:
             self.__args["model_path"] = "model.pt"
         if "cache_size" not in self.__args:
-            self.__args["cache_size"] = 512
+            self.__args["cache_size"] = 1024
 
     def __ready(self) -> None:
         """Initialize the engine"""
@@ -69,20 +71,36 @@ class Engine():
         self.__model = None
 
         if os.path.exists(self.__args["model_path"]):
-            # load the model from the specified path
-            self.__model = ResNet(
-                self.__model_params['num_blocks'],
-                self.__model_params['num_channels'],
-                self.__action_space.size, self.__device)
             try:
-                self.__model.load_state_dict(torch.load(
-                    self.__args["model_path"], map_location=self.__device))
+                self.__model_dict = torch.load(
+                    self.__args["model_path"])
+                self.__model = ResNet(
+                    num_blocks=self.__model_dict["num_blocks"],
+                    num_features=self.__model_dict["num_features"],
+                    num_input_features=self.__model_dict["num_input_features"],
+                    squeeze_and_excitation=self.__model_dict["squeeze_and_excitation"]
+                )
+                self.__model.load_state_dict(
+                    self.__model_dict["model_state_dict"])
+
+                self.__model.to(self.__device)
                 self.__model.eval()
-            except FileNotFoundError:
+            except Exception as e:
                 self.__model = None
-                print("Model corrupted or has wrong structure")
-        self.__mcts = MCTS(self.__args, self.__action_space,
-                           Cache(self.__args["cache_size"]), self.__model)
+                if str(e) != '':
+                    print(e)
+                    print("info Incompatible model")
+                else:
+                    print("Model corrupted or has wrong structure")
+        else: # model not found
+            print("info Model not found")
+
+        self.__mcts = MCTS(
+            self.__args["c_puct"],
+            self.__action_space,
+            Cache(self.__args["cache_size"]),
+            self.__model
+        )
 
         self.__default_go_args = {
             "ponder_move": None,
@@ -105,23 +123,24 @@ class Engine():
     def __safe_input(self) -> str:
         """Read input, handle "quit" command, KeyboardInterrupt and EOFError"""
 
-        try:
-            input_str = ""
-            while not self.__input_interrupt.is_set():
-                input_chr = sys.stdin.read(1)
-                if input_chr == "\n":
-                    break
-                input_str += input_chr
+        # wait for input unless the input_interrupt is set
+        while True:
+            try:
+                input_str = input()
+            except (KeyboardInterrupt, EOFError):
+                # exit the engine
+                self.__search_interrupt.set()
+                self.__input_interrupt.set()
+                print("info Keyboard interrupt")
+                os._exit(0)
             if input_str == "quit".casefold():
-                raise KeyboardInterrupt
-            return input_str
-        except (KeyboardInterrupt, EOFError):
-            # exit the engine
-            self.__search_interrupt.set()
-            raise SystemExit
+                os._exit(0)
+            self.__input_queue.put(input_str)
+            if self.__input_interrupt.is_set():
+                break
 
     def __wait(self):
-        sleep(0.00001)
+        sleep(0.0001)
 
     def __print_search_info(self, time_now: int) -> None:
         """Print the info about the search"""
@@ -129,8 +148,12 @@ class Engine():
         search_time = time_now - self.__search_start_time
         nps = int(
             self.__nodes_searched / search_time)
+        best_line = self.__mcts.best_line()
+        best_line_str = ""
+        for move in best_line:
+            best_line_str += move + " "
         print("info depth", self.__depth_reached, "nodes", self.__nodes_searched, "time", search_time * 1000,
-              "score cp", self.__get_cp_score(), "nps", nps, "pv", self.__mcts.best_line())
+              "score cp", self.__get_cp_score(), "nps", nps, "pv", best_line_str)
 
     def __calculate_search_time(self) -> int:
         """Calculate the time avaible for the search"""
@@ -139,9 +162,9 @@ class Engine():
             # return the time to search
             return self.__go_args["movetime"]
         # get the time left for the current player
-        time_left = self.__go_args["wtime"] if self.__mcts.root.state.turn else self.__go_args["btime"]
+        time_left = self.__go_args["wtime"] if self.__mcts.root.turn else self.__go_args["btime"]
         # get the increment for the current player
-        increment = self.__go_args["winc"] if self.__mcts.root.state.turn else self.__go_args["binc"]
+        increment = self.__go_args["winc"] if self.__mcts.root.turn else self.__go_args["binc"]
         # return the time to search
         if time_left <= 0:
             return 0
@@ -152,11 +175,11 @@ class Engine():
 
         # Alphazero style engines do not evaluate positions using cp scores,
         # probability of victory in range {-1, 1} is used instead.
-        # We can approximate a cp score, assuming a player would be
-        # clearly winning having an advantage of an extra queen.
-        # In Deepmind's Alphazero paper, a queen value of 9.5 is stated.
-        # Approximation will be made using that value rescaled to centipawns.
-        return int(self.__mcts.evaluation * 9.5 * 100)
+        # We can use a recalibrated formula developed for LeelaChessZero
+        # to approximate the cp score from the probability of victory:
+        # cp = 111.714640912 * tan(1.5620688421 * Q), where Q is the probability of victory.
+        # source: https://github.com/LeelaChessZero/lc0/pull/841
+        return int(111.714640912 * math.tan(1.5620688421 * self.__mcts.evaluation))
 
     def __perform_search(self) -> None:
         """
@@ -184,7 +207,7 @@ class Engine():
         self.__depth_reached = self.__mcts.depth
 
     def __ponder(self, move) -> None:
-        self.__mcts.restrict_root([move])
+        self.__mcts.restrict_root([chess.Move.from_uci(move)])
 
         # start search_thread
         ponder_thread = threading.Thread(
@@ -195,19 +218,35 @@ class Engine():
         # continue ponder search until the engine is interrupted
         while True:
             # check input buffer
-            input_str = self.__safe_input()
-            if input_str == "ponderhit" or input_str.startswith("position"):
+            input_str = self.__input_queue.get()
+            # check if the input is a ponder stopper
+            if input_str in self.__ponder_stoppers:
                 self.__search_interrupt.set()
+                break
+            # check if command can be split
+            if ' ' not in input_str:
+                continue
+            command = input_str.split()
+            if command[0] in self.__ponder_stoppers:
+                self.__search_interrupt.set()
+                if command[-1].isdigit():
+                    self.__go_args["movetime"] = float(command[-1])
                 break
 
         # stop the search
         ponder_thread.join()
         if input_str == "ponderhit":
             # ponderhit received, continue pondering
-            self.__mcts.select_child_as_new_root(move)
-        else:
+            self.__mcts.select_child_as_root(move)
+        elif input_str.startswith("position"):
             fen = "".join(input_str.split(maxsplit=1)[1:])
             self.__mcts.root_from_fen(fen)
+        elif input_str.startswith("push"):
+            move = input_str.split()[1]
+            self.__push(move)
+        else:
+            print("Unknown command:", input_str)
+            raise SystemExit
 
         # switch to normal search
         self.__init_search()
@@ -229,40 +268,40 @@ class Engine():
         self.__search_start_time = perf_counter()
 
         # start the search in single thread
-        thread = threading.Thread(
+        search_thread = threading.Thread(
             target=self.__perform_search, daemon=True)
-        thread.start()
+        search_thread.start()
 
         # wait for the search to finish
         if self.__go_args["infinite"]:
             # wait for the stop command
-            while self.__safe_input() != "stop":
-                pass
+            input_str = ''
+            while input_str != "stop":
+                self.__input_queue.get()
             self.__search_interrupt.set()
+
         elif self.__go_args["nodes"] == self.__infinity or self.__go_args["movetime"] != 0:
             # wait for the search to finish by max nodes or stop command
             timer_thread = threading.Thread(
                 target=self.__handle_timer, daemon=True)
             timer_thread.start()
 
-            # await quit or search finish
-            quit_thread = threading.Thread(
-                target=self.__safe_input, daemon=True)
-            quit_thread.start()
-
-            while thread.is_alive():
-                # wait for thread to finish or SystemExit except to be raised from subthread
-                self.__wait()
-                if not quit_thread.is_alive():
-                    sys.exit(0)
-                pass
-            self.__input_interrupt.set()
+            while search_thread.is_alive():
+                # wait search finish or subthread except
+                try:
+                    input_str = self.__input_queue.get_nowait()
+                except:
+                    self.__wait()
+                    continue
+                if input_str in self.__search_stoppers:
+                    self.__search_interrupt.set()
+                    break
             timer_thread.join()
         else:
             pass
 
         # wait for the search to stop
-        thread.join()
+        search_thread.join()
         search_end = perf_counter()
         self.__search_interrupt.clear()
         self.__input_interrupt.clear()
@@ -273,20 +312,30 @@ class Engine():
         # end the search and update time in go_args
         self.__print_search_info(search_end)
         search_time = (search_end - self.__search_start_time) * 1000
-        player = self.__mcts.root.state.turn
+        player = self.__mcts.root.turn
         if player:
             self.__go_args["wtime"] -= search_time
         else:
             self.__go_args["btime"] -= search_time
 
         if pondermove is None:
-            print("bestmove", bestmove)
+            print("bestmove", bestmove.uci())
         else:
-            print("bestmove", bestmove, "ponder", pondermove)
+            print("bestmove", bestmove.uci(), "ponder", pondermove.uci())
 
         # reset engine search stats
         self.__nodes_searched = 0
         self.__depth_reached = 0
+
+        # if autopush is enabled, push the bestmove to the root node
+        if self.__autopush:
+            print(f"info push {bestmove.uci()}")
+            self.__push(bestmove.uci())
+
+        # if autoponder is enabled, start pondering
+        if self.__autoponder:
+            print(f"info ponder {pondermove.uci()}")
+            self.__ponder(pondermove.uci())
 
     def __uci_go(self, go_command: str) -> None:
         """Parse the go command and perform the search"""
@@ -346,14 +395,25 @@ class Engine():
             fen[0] = chess.STARTING_FEN
         elif fen == "startpos":
             fen = chess.STARTING_FEN
+        else:
+            try:
+                chess.Board(fen)
+            except:
+                print("info Invalid fen string")
+                return
 
         # if the mcts has a root node, that means the engine is in the middle of the game,
         # so we should select a child node as the new root, using the opponent's move
         if self.__mcts.root:
             opponent_move = fen[-1]
-            self.__mcts.select_child_as_new_root(opponent_move)
+            self.__mcts.select_child_as_root(opponent_move)
         else:
             self.__mcts.root_from_fen(fen)
+
+    def __push(self, move: str) -> None:
+        """Push a move to the root node"""
+
+        self.__mcts.select_child_as_root(chess.Move.from_uci(move))
 
     def __uci(self) -> None:
         """Handle uci command"""
@@ -363,12 +423,17 @@ class Engine():
         print("id author", self.__info["author"])
         print("uciok")
 
+        # set ponder stoppers
+        self.__ponder_stoppers = ["position", "ponderhit"]
+        # set search stoppers
+        self.__search_stoppers = ["stop"]
+
         # start initializing the engine on a different thread
         init_thread = threading.Thread(target=self.__ready, daemon=True)
         init_thread.start()
 
         while True:
-            command = self.__safe_input()
+            command = self.__input_queue.get()
             if command == "isready":
                 while init_thread.is_alive():
                     pass
@@ -389,14 +454,107 @@ class Engine():
             elif command.startswith("go"):
                 self.__uci_go(command)
 
+    def __enable_autopush(self) -> None:
+        """Enable autopush"""
+
+        self.__autopush = True
+        print("info autopush enabled")
+
+    def __disable_autopush(self) -> None:
+        """Disable autopush"""
+
+        self.__autopush = False
+        print("info autopush disabled")
+
+    def __enable_autoponder(self) -> None:
+        """Enable autoponder"""
+
+        self.__autoponder = True
+        print("info autoponder enabled")
+        if not self.__autopush:
+            self.__enable_autopush()
+
+    def __disable_autoponder(self) -> None:
+        """Disable autoponder"""
+
+        self.__autoponder = False
+        print("info autoponder disabled")
+
+    def __ocb(self) -> None:
+        """Handle ocb command"""
+
+        # acknowledge deepblue interface
+        print("id name", self.__info["name"])
+        print("id author", self.__info["author"])
+        print("ocbok")
+
+        # set ponder stoppers
+        self.__ponder_stoppers = ["push", "stop"]
+        # set search stoppers
+        self.__search_stoppers = ["stop"]
+
+        # set options
+        self.__autoponder = True
+        self.__autopush = True
+
+        # print options
+        print("option name autoponder type check default true")
+        print("option name autopush type check default true")
+        print("info autoponder requires autopush")
+
+        # start initializing the engine on a different thread
+        init_thread = threading.Thread(target=self.__ready, daemon=True)
+        init_thread.start()
+
+        while True:
+            command = self.__input_queue.get()
+            if command == "isready":
+                while init_thread.is_alive():
+                    pass
+                print("readyok")
+
+            elif command == "new":
+                self.__mcts.reset()
+                self.__uci_position("position startpos")
+
+            elif command == "reset":
+                self.__mcts.reset()
+
+            elif command.startswith("position"):
+                self.__uci_position(command)
+
+            elif command.startswith("go"):
+                # if command is like "go num"
+                if len(command.split(sep=' ')) == 2:
+                    command = "go movetime " + command.split()[1] + "000"
+                self.__uci_go(command)
+
+            elif command.startswith("push"):
+                self.__push(command.split()[1])
+
+            elif command.startswith("setoption"):
+                if command.split()[2] == "autoponder":
+                    if command.split()[4] == "true":
+                        self.__enable_autoponder()
+                    else:
+                        self.__disable_autoponder()
+                elif command.split()[2] == "autopush":
+                    if command.split()[4] == "true":
+                        self.__enable_autopush()
+                    else:
+                        self.__disable_autopush()
+
     def __read_init(self) -> None:
         """Read the init command"""
 
         while True:
-            command = self.__safe_input()
+            command = self.__input_queue.get()
             if command == "uci":
                 self.__uci()
+            if command == "ocb":
+                self.__ocb()
 
 
 if __name__ == "__main__":
-    engine = Engine()
+    dml = torch_directml.device()
+    engine = Engine(dml)
