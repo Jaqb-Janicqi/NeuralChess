@@ -252,7 +252,3 @@ class DataLoader(mp.Process):
     @property
     def dataset(self):
         return self
-
-
-def convert_to_numpy(arr):
-    return np.frombuffer(arr, dtype=np.float32).reshape(16, 8, 8)
