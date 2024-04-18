@@ -166,6 +166,21 @@ def parse(shard_path) -> None:
     print(f"Processed {len(files)} files in {(toc - tic)/60} minutes")
 
 
+def train_test_split():
+    df = pd.read_csv('data/positions_full.csv')
+    # filter df to only include positions with ply lower than 20
+    df1 = df[df['ply'] <= 20]
+    df.drop(df1.index, inplace=True)
+    df2 = df[df['ply'] > 20].loc[:len(df1)]
+    df.drop(df2.index, inplace=True)
+    train = pd.concat([df1, df2])
+    train.to_csv('train.csv', index=False)
+    test = df.sample(n=500000)
+    test.to_csv('test.csv', index=False)
+
+
+
 if __name__ == '__main__':
-    parse('E:/lichess_shards/lichess_db_standard_rated_2023-9/')
+    train_test_split()
+    # parse('E:/lichess_shards/lichess_db_standard_rated_2023-9/')
     # parse('E:/lichess_shards/lichess_db_standard_rated_2023-10/')

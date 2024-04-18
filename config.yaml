@@ -15,14 +15,6 @@ c_puct: 250
 model_path: model_files/model0.pth
 
 # cache_size: size of the internal inference cache in Mb.
-# The engine stores results of inference in an internal cache.
-# This cache is required for the engine to acheive a meaningful result.
-# It is not recommended to go below 128Mb for normal matches, and below 512Mb for analysis.
-# Increasing this value further should not be required under normal circumstances.
+# It is not recommended to go below 128Mb.
 # default: 512
 cache_size: 4096
-
-# model precision
-# supported: 16, 32
-# default: 32
-precision: 32

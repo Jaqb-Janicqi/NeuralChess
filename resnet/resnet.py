@@ -1,5 +1,4 @@
 from copy import deepcopy
-from resnet.se_resblock import SeResBlock
 from resnet.resblock import ResBlock
 import torch
 import torch.nn as nn
@@ -8,47 +7,30 @@ import torch.nn as nn
 class ResNet(nn.Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
-        if kwargs.get("dtype") is None:
-            self.__dtype = torch.float32
-        else:
-            self.__dtype = kwargs.get("dtype")
-        if kwargs.get("device") is None:
-            self.__device = torch.device("cpu")
-        else:
-            self.__device = kwargs.get("device")
         self.__num_blocks = kwargs.get("num_blocks")
         self.__num_features = kwargs.get("num_features")
         self.__num_input_features = kwargs.get("num_input_features")
-        self.__squeeze_and_excitation = kwargs.get("squeeze_and_excitation")
         self.__weight_init_mode = kwargs.get("weight_init_mode")
-        self.__disable_policy = False
         self.__init_model()
 
     def __init_model(self):
         self.start_block = nn.Sequential(
-            nn.Conv2d(self.__num_input_features,
-                      self.__num_features, 1, dtype=self.__dtype),
-            nn.BatchNorm2d(self.__num_features, dtype=self.__dtype),
+            nn.Conv2d(self.__num_input_features, self.__num_features, 1),
+            nn.BatchNorm2d(self.__num_features),
             nn.ReLU(inplace=True)
         )
-        if self.__squeeze_and_excitation:
-            self.blocks = nn.ModuleList(
-                [SeResBlock(self.__num_features, dtype=self.__dtype)
-                 for _ in range(self.__num_blocks)]
-            )
-        else:
-            self.blocks = nn.ModuleList(
-                [ResBlock(self.__num_features, dtype=self.__dtype)
-                 for _ in range(self.__num_blocks)]
-            )
+        self.blocks = nn.ModuleList(
+            [ResBlock(self.__num_features)
+                for _ in range(self.__num_blocks)]
+        )
         v_size = self.calculate_value_input_size()
         self.value = nn.Sequential(
             nn.Conv2d(self.__num_features, int(
-                self.__num_features/2), 1, dtype=self.__dtype),
+                self.__num_features/2), 1),
             nn.ReLU(inplace=True),
             nn.Flatten(),
-            nn.Linear(v_size, 3, dtype=self.__dtype),
-            nn.Linear(3, 1, dtype=self.__dtype),
+            nn.Linear(v_size, 3),
+            nn.Linear(3, 1),
             nn.Tanh()
         )
         if self.__weight_init_mode is not None:
@@ -61,10 +43,10 @@ class ResNet(nn.Module):
         return self.value(x)
 
     def to_tensor(self, data):
-        return torch.tensor(data).to(self.dtype).unsqueeze(0).to(self.__device)
+        return torch.tensor(data).unsqueeze(0)
 
     def batch_to_tensor(self, data):
-        return torch.tensor(data).to(self.dtype).to(self.__device)
+        return torch.tensor(data)
 
     def get_value(self, v):
         return v.item()
@@ -124,32 +106,6 @@ class ResNet(nn.Module):
         v = v_seqence(x)
         return v.shape[1]
 
-    def disable_policy(self):
-        self.__disable_policy = True
-
-    def enable_policy(self):
-        self.__disable_policy = False
-
-    @property
-    def policy_disabled(self):
-        return self.__disable_policy
-
-    @property
-    def squeeze_and_excitation(self):
-        return self.__squeeze_and_excitation
-
-    @property
-    def dtype(self):
-        return self.__dtype
-
-    @dtype.setter
-    def dtype(self, dtype):
-        if dtype == torch.float16:
-            self.half()
-        elif dtype == torch.float32:
-            self.float()
-        self.__dtype = dtype
-
     @property
     def num_blocks(self):
         return self.__num_blocks
@@ -160,12 +116,4 @@ class ResNet(nn.Module):
 
     @property
     def input_features(self):
-        return self.__input_features
-
-    @property
-    def policy_size(self):
-        return self.__policy_size
-
-    def to(self, device):
-        self.__device = device
-        return super().to(device)
+        return self.__num_input_features
