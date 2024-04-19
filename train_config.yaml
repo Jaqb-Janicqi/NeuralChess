@@ -1,4 +1,4 @@
 num_input_features: 15
-num_blocks: 8
-num_features: 64
+num_blocks: 6
+num_features: 48
 weight_init_mode: kaiming

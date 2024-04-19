@@ -9,6 +9,7 @@ from resnet.resnet import ResNet
 import yaml
 from torch.utils.data import DataLoader
 from data_loading.dataset import PandasDataset
+from data_loading.sampler import SliceSampler
 from helper.helper_functions import decode_from_fen
 
 
@@ -36,54 +37,53 @@ def train(litmodel, train_loader, val_loader, max_epochs=100, logger_name='defau
                       callbacks=callbacks, precision=precision)
     trainer.fit(litmodel, train_loader, val_loader)
 
-    # save best model
-    # model = ResNet.load_from_checkpoint(checkpoint_callback.best_model_path)
-    # torch.save({
-    #     'model_state_dict': model.state_dict(),
-    #     'num_blocks': config['num_blocks'],
-    #     'num_features': config['num_features'],
-    #     'num_input_features': config['num_input_features'],
-    # }, 'model.pth')
+     # save best model
+    litmodel = LitResNet.load_from_checkpoint(checkpoint_callback.best_model_path, model=litmodel.model)
+    torch.save({
+        'model_state_dict': litmodel.model.state_dict(),
+        'num_blocks': config['num_blocks'],
+        'num_features': config['num_features'],
+        'num_input_features': config['num_input_features'],
+    }, 'model_files/model.pth')
 
 
 def collate_fn(batch):
     data, target = zip(*batch)
+
     tmp = []
     for d in data:
         tmp.append(torch.tensor(decode_from_fen(d), dtype=torch.float32))
     data = tmp
+
     data = torch.stack(data)
     target = torch.tensor(target, dtype=torch.float32)
     return data, target
 
 
 def create_dataloaders():
+    batch_size = 4096
+    slice_size = 256
     train_df = pd.read_csv('data/train.csv')
     train_df = train_df[['fen', 'win_prob']]
-    # truncate dataset for testing
-    train_df = train_df[:len(train_df) // 20]
     train_data = PandasDataset(dataframe=train_df)
+    sampler = SliceSampler(train_data, slice_size, batch_size)
     train_loader = DataLoader(
         train_data,
-        batch_size=4096,
-        shuffle=False,
-        num_workers=8,
+        batch_sampler=sampler,
+        num_workers=4,
         persistent_workers=True,
         pin_memory=True,
-        drop_last=True,
         collate_fn=collate_fn
     )
 
     test_df = pd.read_csv('data/test.csv')
     test_df = test_df[['fen', 'win_prob']]
-    # truncate dataset for testing
-    test_df = test_df[:len(test_df) // 10]
     test_data = PandasDataset(dataframe=test_df)
     test_loader = DataLoader(
         test_data,
-        batch_size=4096,
+        batch_size=batch_size,
         shuffle=False,
-        num_workers=8,
+        num_workers=4,
         persistent_workers=True,
         pin_memory=True,
         collate_fn=collate_fn
@@ -113,4 +113,4 @@ if __name__ == '__main__':
     litmodel = LitResNet(model)
     # Train model
     train(litmodel, train_loader, test_loader,
-          early_stopping=True, max_epochs=100)
+          early_stopping=True, max_epochs=3)

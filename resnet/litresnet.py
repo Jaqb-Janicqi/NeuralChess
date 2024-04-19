@@ -25,7 +25,7 @@ class LitResNet(L.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
+        optimizer = optim.Adam(self.model.parameters(), lr=1e-4, weight_decay=1e-6)
         reduce_lr = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.1, patience=3)
         return {'optimizer': optimizer, 'lr_scheduler': reduce_lr, 'monitor': 'val_loss'}
