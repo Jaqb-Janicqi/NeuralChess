@@ -184,7 +184,6 @@ def create_stockfish_evals():
     positions = generate_positions(chess.Board(), 4)
     # drop duplicates
     positions = list(set(positions))
-    positions = positions[:100]
     print(f"Generated {len(positions)} positions")
 
     evals = []
@@ -213,12 +212,12 @@ def train_test_split():
     df.drop(df2.index, inplace=True)
     train = pd.concat([df1, df2])
     train.to_csv('train.csv', index=False)
-    test = df.sample(n=500000)
+    test = df.sample(n=5000000)
     test.to_csv('test.csv', index=False)
 
 
 if __name__ == '__main__':
     create_stockfish_evals()
-    # train_test_split()
+    train_test_split()
     # parse('E:/lichess_shards/lichess_db_standard_rated_2023-9/')
     # parse('E:/lichess_shards/lichess_db_standard_rated_2023-10/')
