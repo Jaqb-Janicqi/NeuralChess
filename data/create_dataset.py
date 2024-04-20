@@ -166,6 +166,44 @@ def parse(shard_path) -> None:
     print(f"Processed {len(files)} files in {(toc - tic)/60} minutes")
 
 
+def generate_positions(board, depth):
+    positions = [board.fen()]
+    if depth == 0:
+        return positions
+
+    legal_moves = list(board.legal_moves)
+    for move in legal_moves:
+        board.push(move)
+        positions.extend(generate_positions(board, depth - 1))
+        board.pop()
+
+    return positions
+
+
+def create_stockfish_evals():
+    positions = generate_positions(chess.Board(), 4)
+    # drop duplicates
+    positions = list(set(positions))
+    positions = positions[:100]
+    print(f"Generated {len(positions)} positions")
+
+    evals = []
+    with chess.engine.SimpleEngine.popen_uci("C:/Users/janic/Desktop/stockfish-windows-x86-64-avx2/stockfish/stockfish-windows-x86-64-avx2.exe") as engine:
+        for fen in tqdm.tqdm(positions, desc="Evaluating positions", leave=False, dynamic_ncols=True):
+            board = chess.Board(fen)
+            info = engine.analyse(board, chess.engine.Limit(time=0.5))
+
+            ply = board.ply()
+            eval = info["score"].white()
+            cp = eval.score(mate_score=12800)
+            mate = str(eval.mate()) if eval.is_mate() else None
+            win_prob = map_centipawns_to_probability(cp)
+            evals.append((fen, cp, win_prob, mate, ply))
+
+    df = pd.DataFrame(evals, columns=['fen', 'cp', 'win_prob', 'mate', 'ply'])
+    df.to_csv('data/stockfish_ply4.csv', index=False)
+
+
 def train_test_split():
     df = pd.read_csv('data/positions_full.csv')
     # filter df to only include positions with ply lower than 20
@@ -179,8 +217,8 @@ def train_test_split():
     test.to_csv('test.csv', index=False)
 
 
-
 if __name__ == '__main__':
-    train_test_split()
+    create_stockfish_evals()
+    # train_test_split()
     # parse('E:/lichess_shards/lichess_db_standard_rated_2023-9/')
     # parse('E:/lichess_shards/lichess_db_standard_rated_2023-10/')
