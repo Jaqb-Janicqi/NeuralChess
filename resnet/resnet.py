@@ -43,10 +43,10 @@ class ResNet(nn.Module):
         return self.value(x)
 
     def to_tensor(self, data):
-        return torch.tensor(data).unsqueeze(0)
+        return torch.tensor(data).unsqueeze(0).to(self.start_block[0].weight.device)
 
     def batch_to_tensor(self, data):
-        return torch.tensor(data)
+        return torch.tensor(data).to(self.start_block[0].weight.device)
 
     def get_value(self, v):
         return v.item()
