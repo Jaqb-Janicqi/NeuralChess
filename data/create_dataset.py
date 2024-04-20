@@ -188,6 +188,8 @@ def create_stockfish_evals():
 
     evals = []
     with chess.engine.SimpleEngine.popen_uci("C:/Users/janic/Desktop/stockfish-windows-x86-64-avx2/stockfish/stockfish-windows-x86-64-avx2.exe") as engine:
+        engine.configure({"Threads": 16, "Hash": 1024*16, "Skill Level": 20})
+        
         for fen in tqdm.tqdm(positions, desc="Evaluating positions", leave=False, dynamic_ncols=True):
             board = chess.Board(fen)
             info = engine.analyse(board, chess.engine.Limit(time=0.5))
