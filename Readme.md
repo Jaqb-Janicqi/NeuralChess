@@ -93,8 +93,8 @@ Selection:
     e.g. push e2e4
 
 ## Dependencies
-[Microsoft DirectML](https://python-chess.readthedocs.io/en/latest/)\
 [PyTorch](https://python-chess.readthedocs.io/en/latest/)\
+[PyTorch Lighning](https://lightning.ai/docs/pytorch/stable/starter/installation.html)\
 [NumPy](https://python-chess.readthedocs.io/en/latest/)\
 [python-chess](https://python-chess.readthedocs.io/en/latest/)\
 [PyYAML](https://pypi.org/project/PyYAML/)
