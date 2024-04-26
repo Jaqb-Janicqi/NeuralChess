@@ -12,9 +12,9 @@ c_puct: 250
 
 # model_path - path to your NN model.
 # default: model.pt
-model_path: model_files/model0.pth
+model_path: model_files/model.pth
 
 # cache_size: size of the internal inference cache in Mb.
 # It is not recommended to go below 128Mb.
-# default: 512
+# default: 4096
 cache_size: 4096

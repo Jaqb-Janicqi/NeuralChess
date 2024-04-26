@@ -6,6 +6,7 @@ import pandas as pd
 import tqdm
 import time
 import io
+import numpy as np
 
 import multiprocessing as mp
 import psutil
@@ -180,19 +181,65 @@ def generate_positions(board, depth):
     return positions
 
 
+def generate_random_at_depth(board, depth):
+    if depth == 0:
+        return board.fen()
+
+    legal_moves = list(board.legal_moves)
+    move = np.random.choice(legal_moves)
+    board.push(move)
+    while board.is_checkmate() or board.is_stalemate():
+        board.pop()
+        move = np.random.choice(legal_moves)
+        board.push(move)
+    return generate_random_at_depth(board, depth - 1)
+
+
+def generate_random_to_depth(board, start_depth, end_depth):
+    positions = [board.fen()]
+    if start_depth == end_depth:
+        return positions
+
+    legal_moves = list(board.legal_moves)
+    move = np.random.choice(legal_moves)
+    board.push(move)
+    while board.is_checkmate() or board.is_stalemate():
+        board.pop()
+        move = np.random.choice(legal_moves)
+        board.push(move)
+    positions.extend(generate_random_to_depth(board, start_depth + 1, end_depth))
+    return positions
+
+
 def create_stockfish_evals():
-    positions = generate_positions(chess.Board(), 4)
+    eval_time = 200
+    positions = []
+    positions.extend(generate_positions(chess.Board(), 4))
+    for _ in range(10000):
+        positions.extend(generate_random_to_depth(chess.Board(), 0, 12))
+    for pos in positions:
+        # check if position is str
+        if not isinstance(pos, str):
+            positions.remove(pos)
+    positions = pd.DataFrame(positions, columns=['fen'])
+    df_train = pd.read_csv('train.csv')
+    df_test = pd.read_csv('test.csv')
     # drop duplicates
-    positions = list(set(positions))
+    positions = positions[~positions['fen'].isin(df_train['fen'])]
+    positions = positions[~positions['fen'].isin(df_test['fen'])]
+    del df_train
+    del df_test
+    positions = positions['fen'].tolist()
     print(f"Generated {len(positions)} positions")
 
     evals = []
     with chess.engine.SimpleEngine.popen_uci("C:/Users/janic/Desktop/stockfish-windows-x86-64-avx2/stockfish/stockfish-windows-x86-64-avx2.exe") as engine:
-        engine.configure({"Threads": 16, "Hash": 1024*16, "Skill Level": 20})
-        
+        engine.configure({"Threads": 16, "Hash": 1024*24, "Skill Level": 20})
+
         for fen in tqdm.tqdm(positions, desc="Evaluating positions", leave=False, dynamic_ncols=True):
             board = chess.Board(fen)
-            info = engine.analyse(board, chess.engine.Limit(time=0.5))
+
+            info = engine.analyse(board, chess.engine.Limit(time=eval_time/1000))
 
             ply = board.ply()
             eval = info["score"].white()
@@ -202,24 +249,34 @@ def create_stockfish_evals():
             evals.append((fen, cp, win_prob, mate, ply))
 
     df = pd.DataFrame(evals, columns=['fen', 'cp', 'win_prob', 'mate', 'ply'])
-    df.to_csv('data/stockfish_ply4.csv', index=False)
+    df.to_csv(f'stockfish_{eval_time}ms.csv', index=False)
 
 
 def train_test_split():
     df = pd.read_csv('data/positions_full.csv')
+    
     # filter df to only include positions with ply lower than 20
-    df1 = df[df['ply'] <= 20]
-    df.drop(df1.index, inplace=True)
-    df2 = df[df['ply'] > 20].loc[:len(df1)]
-    df.drop(df2.index, inplace=True)
-    train = pd.concat([df1, df2])
+    df_low_ply = df[df['ply'] <= 20].copy()
+    df.drop(df_low_ply.index, inplace=True)
+
+    df_high_ply = df[df['ply'] > 20].loc[:len(df_low_ply)].copy()
+    df.drop(df_high_ply.index, inplace=True)
+
+    test_low_ply = df_low_ply.sample(frac=0.1)
+    df_low_ply.drop(test_low_ply.index, inplace=True)
+
+    train = pd.concat([df_low_ply, df_high_ply])
+    train = train.drop_duplicates(subset=['fen'], keep='first')
     train.to_csv('train.csv', index=False)
-    test = df.sample(n=5000000)
+
+    df_test_sample = df.sample(n=5000000)
+    test = pd.concat([df_test_sample, test_low_ply])
+    test = test.drop_duplicates(subset=['fen'], keep='first')
     test.to_csv('test.csv', index=False)
 
 
 if __name__ == '__main__':
-    create_stockfish_evals()
     train_test_split()
+    # create_stockfish_evals()
     # parse('E:/lichess_shards/lichess_db_standard_rated_2023-9/')
     # parse('E:/lichess_shards/lichess_db_standard_rated_2023-10/')

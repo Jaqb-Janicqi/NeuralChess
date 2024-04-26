@@ -27,6 +27,7 @@ class ResNet(nn.Module):
         self.value = nn.Sequential(
             nn.Conv2d(self.__num_features, int(
                 self.__num_features/2), 1),
+            nn.BatchNorm2d(int(self.__num_features/2)),
             nn.ReLU(inplace=True),
             nn.Flatten(),
             nn.Linear(v_size, 3),

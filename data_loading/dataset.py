@@ -8,9 +8,7 @@ class PandasDataset(Dataset):
 
     def __getitem__(self, index) -> tuple:
         row = self.dataframe.iloc[index]
-        feature = row.iloc[0]
-        label = row.iloc[1]
-        return feature, label
+        return row.iloc[0], row.iloc[1]
 
     def __len__(self) -> int:
         return len(self.dataframe)
