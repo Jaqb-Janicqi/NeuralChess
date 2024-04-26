@@ -7,17 +7,16 @@ from time import perf_counter, sleep
 
 import chess
 import torch
-import torch_directml
 import yaml
 
-from actionspace.actionspace import ActionSpace
 from cache.cache_read_priority import Cache
+from actionspace.actionspace import ActionSpace
 from mcts.mcts import MCTS
 from resnet.resnet import ResNet
 
 
 class Engine():
-    def __init__(self, device=torch.device("cpu")) -> None:
+    def __init__(self, device=torch.device("cpu") if not torch.cuda.is_available() else torch.device("cuda")) -> None:
         self.__args = None
         self.__device = device
         self.__info = {
@@ -77,8 +76,7 @@ class Engine():
                 self.__model = ResNet(
                     num_blocks=self.__model_dict["num_blocks"],
                     num_features=self.__model_dict["num_features"],
-                    num_input_features=self.__model_dict["num_input_features"],
-                    squeeze_and_excitation=self.__model_dict["squeeze_and_excitation"]
+                    num_input_features=self.__model_dict["num_input_features"]
                 )
                 self.__model.load_state_dict(
                     self.__model_dict["model_state_dict"])
@@ -556,5 +554,4 @@ class Engine():
 
 
 if __name__ == "__main__":
-    dml = torch_directml.device()
-    engine = Engine(dml)
+    engine = Engine()
